@@ -337,7 +337,14 @@ export function App() {
                 </button>
               </div>
               {history.length === 0 ? (
-                <div className="empty-state">No transfers yet. Share something from your phone!</div>
+                <div className="empty-state-rich">
+                  <div className="empty-icon">📲</div>
+                  <h4>No transfers yet</h4>
+                  <p>Share photos, links, or text from your paired Android phone or use &quot;Push Text to Phone&quot; above to see items here in real time.</p>
+                  <button className="primary-btn pair-btn mt-2" onClick={openQrModal}>
+                    + Pair New Phone
+                  </button>
+                </div>
               ) : (
                 <ul className="item-list">
                   {history.slice(0, 4).map((item) => (
@@ -366,7 +373,14 @@ export function App() {
                 )}
               </div>
               {history.length === 0 ? (
-                <div className="empty-state">No history recorded yet.</div>
+                <div className="empty-state-rich">
+                  <div className="empty-icon">📋</div>
+                  <h4>Clipboard history is empty</h4>
+                  <p>Inbound transfers from your phone and outbound pushes from your PC will be safely preserved here in your local SQLite database.</p>
+                  <button className="btn-sm mt-2" onClick={() => setActiveTab("home")}>
+                    Go to Home &rarr;
+                  </button>
+                </div>
               ) : (
                 <ul className="item-list">
                   {history.map((item) => (
@@ -410,7 +424,14 @@ export function App() {
                 <button className="primary-btn" onClick={openQrModal}>+ Pair New Phone</button>
               </div>
               {devices.length === 0 ? (
-                <div className="empty-state">No paired devices found. Tap &quot;+ Pair New Phone&quot; to connect your Android device.</div>
+                <div className="empty-state-rich">
+                  <div className="empty-icon">🔒</div>
+                  <h4>No paired Android devices</h4>
+                  <p>ClipSync connects directly over your local Wi-Fi with TLS certificate pinning. No account, internet relay, or cloud storage required.</p>
+                  <button className="primary-btn mt-2" onClick={openQrModal}>
+                    + Pair Your Android Phone Now
+                  </button>
+                </div>
               ) : (
                 <ul className="device-list">
                   {devices.map((dev) => (
@@ -592,6 +613,12 @@ export function App() {
                 <p>
                   Ensure ClipSync is permitted through Windows Firewall. If pairing or transfers fail, verify that inbound connections are allowed for ClipSync on Private networks.
                 </p>
+                <div className="code-hint mt-2">
+                  <span>To add the firewall rule manually via Administrator Command Prompt:</span>
+                  <pre className="code-block">
+                    netsh advfirewall firewall add rule name=&quot;ClipSync&quot; dir=in action=allow protocol=TCP localport=47821
+                  </pre>
+                </div>
               </div>
               <div className="help-section">
                 <h4>2. Wi-Fi AP Isolation</h4>

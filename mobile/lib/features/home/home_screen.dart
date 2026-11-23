@@ -93,10 +93,19 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       } catch (e) {
+        String errorMsg = 'Send error: $e';
+        if (e.toString().contains('exceeds maximum limit')) {
+          errorMsg = 'Clipboard text exceeds 1 MB limit. Please shorten or share as a file.';
+        } else if (e.toString().contains('Failed host lookup') ||
+            e.toString().contains('Connection refused') ||
+            e.toString().contains('timed out')) {
+          errorMsg =
+              'Could not reach $_pcName. Ensure ClipSync is open on your PC and both devices are on the same Wi-Fi.';
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Send error: $e'),
+              content: Text(errorMsg),
               backgroundColor: Colors.red,
             ),
           );
@@ -124,10 +133,19 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     } catch (e) {
+      String errorMsg = 'Send error: $e';
+      if (e.toString().contains('exceeds maximum limit')) {
+        errorMsg = 'Text exceeds 1 MB limit. Please shorten text or share as a file.';
+      } else if (e.toString().contains('Failed host lookup') ||
+          e.toString().contains('Connection refused') ||
+          e.toString().contains('timed out')) {
+        errorMsg =
+            'Could not reach $_pcName. Ensure ClipSync is open on your PC and both devices are on the same Wi-Fi.';
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Send error: $e'),
+            content: Text(errorMsg),
             backgroundColor: Colors.red,
           ),
         );
@@ -152,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'File exceeds 50 MB limit (${(size / (1024 * 1024)).toStringAsFixed(1)} MB)',
+                'File exceeds 50 MB limit (${(size / (1024 * 1024)).toStringAsFixed(1)} MB). Please select a file under 50 MB.',
               ),
               backgroundColor: Colors.red,
             ),
@@ -249,12 +267,20 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_connectionStatus == 'Searching') chipColor = Colors.orange;
 
     return Center(
-      child: Chip(
+      child: ActionChip(
         avatar: CircleAvatar(
           backgroundColor: chipColor,
           radius: 6,
         ),
         label: Text('$_pcName ($_connectionStatus)'),
+        tooltip: _connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode'
+            ? 'Connected to $_pcName'
+            : 'Tap to pair with PC',
+        onPressed: () {
+          if (_connectionStatus != 'Connected' && _connectionStatus != 'Dev Mode') {
+            Navigator.pushNamed(context, '/pair');
+          }
+        },
       ),
     );
   }
@@ -315,12 +341,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildRecentTransfers() {
     if (_recentTransfers.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(
-          child: Text(
-            'No recent transfers yet',
-            style: TextStyle(color: Colors.grey),
+      final isConnected =
+          _connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode';
+      return Card(
+        elevation: 0,
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.35),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+          child: Column(
+            children: [
+              Icon(
+                Icons.sync_alt_rounded,
+                size: 44,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Ready to Sync',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                isConnected
+                    ? 'Type text, tap "Send Clipboard", or choose a photo/file to send instantly to $_pcName.'
+                    : 'Pair with your Windows PC to begin syncing clipboards and sending files.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (!isConnected) ...[
+                const SizedBox(height: 14),
+                FilledButton.tonalIcon(
+                  onPressed: () => Navigator.pushNamed(context, '/pair'),
+                  icon: const Icon(Icons.qr_code_scanner, size: 18),
+                  label: const Text('Scan QR to Pair'),
+                ),
+              ],
+            ],
           ),
         ),
       );
