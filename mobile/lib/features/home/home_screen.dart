@@ -73,7 +73,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
       try {
-        await _transferService.sendText(text);
+        final kind = (text.startsWith('http://') || text.startsWith('https://'))
+            ? 'link'
+            : 'text';
+        await _transferService.sendText(text, kind: kind);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Clipboard text queued for transfer')),

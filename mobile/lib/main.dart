@@ -1,6 +1,8 @@
-import 'package:material_ui/material_ui.dart';
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'features/history/history_screen.dart';
 import 'features/home/dev_screen.dart';
@@ -34,7 +36,10 @@ final _router = GoRouter(
     ),
     GoRoute(
       path: '/share',
-      builder: (context, state) => const ShareReceiverScreen(),
+      builder: (context, state) {
+        final files = state.extra as List<SharedMediaFile>?;
+        return ShareReceiverScreen(sharedFiles: files);
+      },
     ),
   ],
 );
@@ -48,8 +53,40 @@ void main() {
   );
 }
 
-class ClipSyncApp extends StatelessWidget {
+class ClipSyncApp extends StatefulWidget {
   const ClipSyncApp({super.key});
+
+  @override
+  State<ClipSyncApp> createState() => _ClipSyncAppState();
+}
+
+class _ClipSyncAppState extends State<ClipSyncApp> {
+  StreamSubscription? _intentSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for incoming share intents while app is running
+    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen((files) {
+      if (files.isNotEmpty) {
+        _router.push('/share', extra: files);
+      }
+    });
+
+    // Handle initial intent when opened via share sheet
+    ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+      if (files.isNotEmpty) {
+        _router.push('/share', extra: files);
+        ReceiveSharingIntent.instance.reset();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _intentSub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
