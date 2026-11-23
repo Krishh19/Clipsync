@@ -1,11 +1,15 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/models.dart';
 import '../../data/secure_store.dart';
 import '../../services/transfer_service.dart';
+import '../history/history_screen.dart';
+import '../pairing/pairing_screen.dart';
+import '../settings/settings_screen.dart';
 import 'dev_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -60,6 +64,41 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+  }
+
+  Future<void> _openPairing() async {
+    try {
+      await context.push('/pair');
+    } catch (_) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PairingScreen()),
+      );
+    }
+    _loadPcInfo();
+  }
+
+  Future<void> _openHistory() async {
+    try {
+      await context.push('/history');
+    } catch (_) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const HistoryScreen()),
+      );
+    }
+  }
+
+  Future<void> _openSettings() async {
+    try {
+      await context.push('/settings');
+    } catch (_) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      );
+    }
+    _loadPcInfo();
   }
 
   @override
@@ -225,15 +264,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.history),
-            onPressed: () {
-              Navigator.pushNamed(context, '/history');
-            },
+            tooltip: 'Transfer History',
+            onPressed: _openHistory,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.pushNamed(context, '/settings');
-            },
+            tooltip: 'Settings',
+            onPressed: _openSettings,
           ),
         ],
       ),
@@ -278,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : 'Tap to pair with PC',
         onPressed: () {
           if (_connectionStatus != 'Connected' && _connectionStatus != 'Dev Mode') {
-            Navigator.pushNamed(context, '/pair');
+            _openPairing();
           }
         },
       ),
@@ -380,7 +417,7 @@ class _HomeScreenState extends State<HomeScreen> {
               if (!isConnected) ...[
                 const SizedBox(height: 14),
                 FilledButton.tonalIcon(
-                  onPressed: () => Navigator.pushNamed(context, '/pair'),
+                  onPressed: _openPairing,
                   icon: const Icon(Icons.qr_code_scanner, size: 18),
                   label: const Text('Scan QR to Pair'),
                 ),

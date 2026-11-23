@@ -195,6 +195,42 @@ class _PairingScreenState extends State<PairingScreen> {
               MobileScanner(
                 controller: _scannerController,
                 onDetect: _onQrDetected,
+                errorBuilder: (context, error) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.no_photography, size: 52, color: Colors.amber),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Camera access is required to scan QR code',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${error.errorCode.name}: ${error.errorDetails?.message ?? "Permission required"}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: () => _scannerController.start(),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Grant Camera / Retry'),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () => setState(() => _isManual = true),
+                            child: const Text('Enter Details Manually'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
               Center(
                 child: Container(
