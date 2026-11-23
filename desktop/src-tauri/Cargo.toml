@@ -1,0 +1,47 @@
+[package]
+name = "clipsync-desktop"
+version = "0.1.0"
+description = "ClipSync Desktop Application"
+authors = ["ClipSync"]
+edition = "2021"
+
+[lib]
+name = "clipsync_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+dev_plain_http = []
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
+axum = { version = "0.7", features = ["ws", "multipart"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.5", features = ["limit", "trace", "cors"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
+arboard = "3"
+clipboard-win = "5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+mdns-sd = "0.13"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+thiserror = "1.0"
+anyhow = "1.0"
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+rand = "0.8"
+qrcode = "0.14"
+image = "0.25"

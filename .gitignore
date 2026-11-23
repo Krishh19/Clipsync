@@ -1,0 +1,33 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/
+
+# Android
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/**/build/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# ClipSync Local Storage & Secrets
+tls/
+config.json
+logs/
+.partial/

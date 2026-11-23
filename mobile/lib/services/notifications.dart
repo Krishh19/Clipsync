@@ -1,0 +1,77 @@
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+class NotificationsService {
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+
+  static const String channelId = 'clipsync_channel';
+  static const String channelName = 'ClipSync Notifications';
+  static const String channelDescription = 'ClipSync incoming content notifications';
+
+  static Future<void> initialize({
+    void Function(NotificationResponse response)? onNotificationTapped,
+  }) async {
+    const androidInitSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidInitSettings);
+
+    await _notificationsPlugin.initialize(
+      settings: initSettings,
+      onDidReceiveNotificationResponse: onNotificationTapped,
+    );
+  }
+
+  static Future<void> showTextReceived({
+    required int id,
+    required String senderName,
+    required String text,
+  }) async {
+    final preview = text.length > 80 ? '${text.substring(0, 80)}...' : text;
+    const androidDetails = AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction('copy_action', 'Copy', showsUserInterface: false),
+      ],
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(
+      id: id,
+      title: 'From $senderName',
+      body: preview,
+      notificationDetails: details,
+      payload: text,
+    );
+  }
+
+  static Future<void> showFileOffer({
+    required int id,
+    required String senderName,
+    required String fileName,
+    required String fileId,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction('download_action', 'Download', showsUserInterface: true),
+      ],
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(
+      id: id,
+      title: 'From $senderName offered file',
+      body: fileName,
+      notificationDetails: details,
+      payload: fileId,
+    );
+  }
+}
