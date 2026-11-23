@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = Database::new_in_memory()?;
     let state = AppState::new(cfg, db);
 
-    let handle = start_server(state.clone(), 47821).await?;
+    let handle = start_server(state.clone(), 47821, false).await?;
 
     println!("============================================================");
     println!("ClipSync Dev Server running at: http://127.0.0.1:{}", handle.port);

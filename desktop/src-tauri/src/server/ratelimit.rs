@@ -25,7 +25,7 @@ impl RateLimiter {
             }
             IpAddr::V6(v6) => {
                 v6.is_loopback()
-                    || ((v6.segments()[0] & 0xffc0) == 0xfe80) // fe80::/10
+                    || ((v6.segments()[0] & 0xffc0) == 0xfe80) // fe80::/10 (link-local)
                     || ((v6.segments()[0] & 0xfe00) == 0xfc00) // fc00::/7 (unique local)
             }
         }
@@ -51,8 +51,17 @@ impl RateLimiter {
         let mut map = self.failed_auths.lock().unwrap();
         let now = Instant::now();
         let entry = map.entry(ip).or_insert((0, now));
+        // If previous block expired, reset count
+        if entry.1.elapsed() >= Duration::from_secs(60) {
+            entry.0 = 0;
+        }
         entry.0 += 1;
         entry.1 = now;
+    }
+
+    pub fn record_auth_success(&self, ip: IpAddr) {
+        let mut map = self.failed_auths.lock().unwrap();
+        map.remove(&ip);
     }
 
     pub fn is_auth_blocked(&self, ip: IpAddr) -> bool {
@@ -63,5 +72,68 @@ impl RateLimiter {
             }
         }
         false
+    }
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn test_private_ip_detection() {
+        // Private IPv4
+        assert!(RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))));
+        assert!(RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50))));
+        assert!(RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
+
+        // Public IPv4 (should be rejected)
+        assert!(!RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(!RateLimiter::is_private_ip(&IpAddr::V4(Ipv4Addr::new(142, 250, 190, 46))));
+
+        // IPv6 loopback
+        assert!(RateLimiter::is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn test_pair_rate_limiting() {
+        let limiter = RateLimiter::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+
+        // 5 attempts allowed within 60s
+        for _ in 0..5 {
+            assert!(limiter.check_pair_rate(ip));
+        }
+
+        // 6th attempt rejected
+        assert!(!limiter.check_pair_rate(ip));
+    }
+
+    #[test]
+    fn test_auth_failure_blocking() {
+        let limiter = RateLimiter::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 101));
+
+        for _ in 0..4 {
+            limiter.record_auth_failure(ip);
+            assert!(!limiter.is_auth_blocked(ip));
+        }
+
+        // 5th failure triggers block
+        limiter.record_auth_failure(ip);
+        assert!(limiter.is_auth_blocked(ip));
+
+        // Success resets failure count
+        limiter.record_auth_success(ip);
+        assert!(!limiter.is_auth_blocked(ip));
     }
 }

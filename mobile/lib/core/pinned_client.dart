@@ -5,20 +5,27 @@ import 'package:dio/io.dart';
 
 /// Factory for certificate-pinned HttpClient and Dio instances
 class PinnedClient {
+  /// Verifies whether [certDerBytes] matches [expectedFingerprint] using SHA-256.
+  static bool verifyCertificateBytes(
+    List<int> certDerBytes,
+    String expectedFingerprint,
+  ) {
+    final normalizedExpected =
+        expectedFingerprint.replaceAll(':', '').replaceAll(' ', '').toLowerCase();
+    final digest = sha256.convert(certDerBytes);
+    final actualFingerprint = digest.toString().toLowerCase();
+    return actualFingerprint == normalizedExpected;
+  }
+
   /// Builds a raw [HttpClient] that verifies the server's DER certificate SHA-256 fingerprint.
   static HttpClient createHttpClient(String expectedFingerprint) {
     final client = HttpClient(
       context: SecurityContext(withTrustedRoots: false),
     );
-    final normalizedExpected =
-        expectedFingerprint.replaceAll(':', '').replaceAll(' ', '').toLowerCase();
 
     client.badCertificateCallback =
         (X509Certificate cert, String host, int port) {
-      final certDer = cert.der;
-      final digest = sha256.convert(certDer);
-      final actualFingerprint = digest.toString().toLowerCase();
-      return actualFingerprint == normalizedExpected;
+      return verifyCertificateBytes(cert.der, expectedFingerprint);
     };
 
     return client;

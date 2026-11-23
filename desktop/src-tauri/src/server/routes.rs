@@ -6,11 +6,13 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use tower_http::trace::TraceLayer;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::server::auth::{hash_secret, verify_bearer};
 use crate::server::errors::ApiError;
+use crate::server::ratelimit::RateLimiter;
 use crate::server::upload::handle_file_upload;
 use crate::server::ws::handle_ws_upgrade;
 use crate::state::AppState;
@@ -38,6 +40,13 @@ pub struct PairResponse {
     pub server_name: String,
 }
 
+#[derive(Serialize)]
+pub struct PairQrResponse {
+    pub url: String,
+    pub svg: String,
+    pub expires_in_seconds: u64,
+}
+
 #[derive(Deserialize)]
 pub struct TextRequest {
     pub kind: String,
@@ -55,6 +64,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/info", get(get_info))
         .route("/api/v1/pair", post(post_pair))
         .route("/api/v1/pair", delete(delete_pair))
+        .route("/api/v1/pair/qr", get(get_pair_qr_endpoint))
         .route("/api/v1/text", post(post_text))
         .route("/api/v1/file", post(post_file))
         .route("/api/v1/files/:id", get(get_file))
@@ -63,19 +73,111 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-async fn get_info(State(state): State<Arc<AppState>>) -> Json<InfoResponse> {
+fn extract_client_ip(headers: &HeaderMap) -> IpAddr {
+    if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first_ip) = forwarded.split(',').next() {
+            if let Ok(ip) = first_ip.trim().parse() {
+                return ip;
+            }
+        }
+    }
+    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse() {
+            return ip;
+        }
+    }
+    IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+}
+
+fn check_auth_and_ip(headers: &HeaderMap, state: &AppState) -> Result<String, ApiError> {
+    let ip = extract_client_ip(headers);
+
+    if !RateLimiter::is_private_ip(&ip) {
+        return Err(ApiError::Unauthorized);
+    }
+
+    if state.rate_limiter.is_auth_blocked(ip) {
+        return Err(ApiError::RateLimited);
+    }
+
+    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+    match verify_bearer(auth, &state.database) {
+        Some(device_id) => {
+            state.rate_limiter.record_auth_success(ip);
+            Ok(device_id)
+        }
+        None => {
+            state.rate_limiter.record_auth_failure(ip);
+            Err(ApiError::Unauthorized)
+        }
+    }
+}
+
+async fn get_info(headers: HeaderMap, State(state): State<Arc<AppState>>) -> Result<Json<InfoResponse>, ApiError> {
+    let ip = extract_client_ip(&headers);
+    if !RateLimiter::is_private_ip(&ip) {
+        return Err(ApiError::Unauthorized);
+    }
+
     let cfg = state.config.read().await;
-    Json(InfoResponse {
+    Ok(Json(InfoResponse {
         name: cfg.device_name.clone(),
         device_id: cfg.server_device_id.clone(),
         protocol: 1,
-    })
+    }))
+}
+
+async fn get_pair_qr_endpoint(
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PairQrResponse>, ApiError> {
+    let ip = extract_client_ip(&headers);
+    if !RateLimiter::is_private_ip(&ip) {
+        return Err(ApiError::Unauthorized);
+    }
+
+    let (port, server_id, server_name) = {
+        let cfg = state.config.read().await;
+        (cfg.port, cfg.server_device_id.clone(), cfg.device_name.clone())
+    };
+
+    let fp = {
+        let f = state.cert_fingerprint.read().await;
+        if f.is_empty() {
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+        } else {
+            f.clone()
+        }
+    };
+
+    let qr_data = state
+        .pairing_manager
+        .get_qr_data("127.0.0.1", port, &fp, &server_id, &server_name)
+        .await
+        .ok_or_else(|| ApiError::Internal("Failed to generate QR data".to_string()))?;
+
+    Ok(Json(PairQrResponse {
+        url: qr_data.url,
+        svg: qr_data.svg,
+        expires_in_seconds: qr_data.expires_in_seconds,
+    }))
 }
 
 async fn post_pair(
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     Json(req): Json<PairRequest>,
 ) -> Result<Json<PairResponse>, ApiError> {
+    let ip = extract_client_ip(&headers);
+
+    if !RateLimiter::is_private_ip(&ip) {
+        return Err(ApiError::Unauthorized);
+    }
+
+    if !state.rate_limiter.check_pair_rate(ip) {
+        return Err(ApiError::RateLimited);
+    }
+
     let is_valid = state.pairing_manager.consume_token(&req.token).await;
     if !is_valid {
         return Err(ApiError::InvalidToken);
@@ -116,8 +218,7 @@ async fn delete_pair(
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Result<StatusCode, ApiError> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    let device_id = verify_bearer(auth, &state.database).ok_or(ApiError::Unauthorized)?;
+    let device_id = check_auth_and_ip(&headers, &state)?;
 
     state
         .database
@@ -132,8 +233,7 @@ async fn post_text(
     State(state): State<Arc<AppState>>,
     Json(req): Json<TextRequest>,
 ) -> Result<(StatusCode, Json<TextResponse>), ApiError> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    let device_id = verify_bearer(auth, &state.database).ok_or(ApiError::Unauthorized)?;
+    let device_id = check_auth_and_ip(&headers, &state)?;
 
     if req.content.len() > 1024 * 1024 {
         return Err(ApiError::TooLarge("Text exceeds 1 MB limit".to_string()));
@@ -190,8 +290,7 @@ async fn post_file(
     State(state): State<Arc<AppState>>,
     body: Body,
 ) -> Result<impl IntoResponse, ApiError> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    let _device_id = verify_bearer(auth, &state.database).ok_or(ApiError::Unauthorized)?;
+    let _device_id = check_auth_and_ip(&headers, &state)?;
 
     handle_file_upload(headers, state, body).await
 }
@@ -201,8 +300,7 @@ async fn get_file(
     State(state): State<Arc<AppState>>,
     AxumPath(file_id): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    let _device_id = verify_bearer(auth, &state.database).ok_or(ApiError::Unauthorized)?;
+    let _device_id = check_auth_and_ip(&headers, &state)?;
 
     let offer = state
         .get_file_offer(&file_id)
@@ -230,8 +328,7 @@ async fn get_events(
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, ApiError> {
-    let auth = headers.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    let device_id = verify_bearer(auth, &state.database).ok_or(ApiError::Unauthorized)?;
+    let device_id = check_auth_and_ip(&headers, &state)?;
 
     Ok(handle_ws_upgrade(ws, state, device_id).await)
 }

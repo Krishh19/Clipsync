@@ -7,6 +7,7 @@ use crate::clipboard::{ClipboardWatcher, ClipboardWriter};
 use crate::config::AppConfig;
 use crate::pairing::PairingManager;
 use crate::server::dedup::ClientIdDedup;
+use crate::server::ratelimit::RateLimiter;
 use crate::server::ws::WsServerMessage;
 use crate::storage::{Database, FileManager};
 
@@ -31,6 +32,8 @@ pub struct AppState {
     pub file_offers: Arc<RwLock<HashMap<String, FileOffer>>>,
     pub last_written_clipboard: Arc<Mutex<Option<Vec<u8>>>>,
     pub client_id_dedup: Arc<ClientIdDedup>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub cert_fingerprint: Arc<RwLock<String>>,
 }
 
 impl AppState {
@@ -51,6 +54,8 @@ impl AppState {
             file_offers: Arc::new(RwLock::new(HashMap::new())),
             last_written_clipboard: last_written,
             client_id_dedup: Arc::new(ClientIdDedup::default()),
+            rate_limiter: Arc::new(RateLimiter::default()),
+            cert_fingerprint: Arc::new(RwLock::new(String::new())),
         })
     }
 

@@ -46,8 +46,9 @@ impl PairingManager {
 
     pub async fn consume_token(&self, token: &str) -> bool {
         let mut lock = self.active_token.write().await;
-        if let Some(active) = lock.take() {
+        if let Some(active) = lock.as_ref() {
             if active.token == token && active.created_at.elapsed() <= active.expires_in {
+                lock.take();
                 return true;
             }
         }
@@ -123,4 +124,63 @@ fn urlencoding_encode(val: &str) -> String {
         }
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_pairing_token_single_use() {
+        let pm = PairingManager::new();
+        let token = pm.create_token().await;
+        assert_eq!(token.len(), 32); // 16 bytes hex
+
+        // First consume succeeds
+        assert!(pm.consume_token(&token).await);
+
+        // Second consume fails (single use)
+        assert!(!pm.consume_token(&token).await);
+    }
+
+    #[tokio::test]
+    async fn test_pairing_token_wrong_token() {
+        let pm = PairingManager::new();
+        let _token = pm.create_token().await;
+
+        assert!(!pm.consume_token("wrong-token-123").await);
+    }
+
+    #[tokio::test]
+    async fn test_pairing_token_expiry() {
+        let pm = PairingManager::new();
+        let token = pm.create_token().await;
+
+        // Manually expire token
+        {
+            let mut lock = pm.active_token.write().await;
+            if let Some(ref mut active) = *lock {
+                active.expires_in = Duration::from_millis(50);
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(!pm.consume_token(&token).await);
+    }
+
+    #[tokio::test]
+    async fn test_get_qr_data() {
+        let pm = PairingManager::new();
+        let qr = pm
+            .get_qr_data("192.168.1.5", 47821, "abc123fp", "server-id", "My PC")
+            .await
+            .unwrap();
+
+        assert!(qr.url.starts_with("clipsync://pair?host=192.168.1.5&port=47821&token="));
+        assert!(qr.url.contains("&fp=abc123fp"));
+        assert!(qr.url.contains("&id=server-id"));
+        assert!(qr.url.contains("&name=My%20PC"));
+        assert!(qr.svg.contains("<svg"));
+        assert_eq!(qr.expires_in_seconds, 300);
+    }
 }

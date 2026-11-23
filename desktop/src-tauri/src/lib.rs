@@ -47,11 +47,11 @@ pub fn run() {
 
     let app_state = AppState::new(cfg.clone(), db);
 
-    // Start background Axum server
+    // Start background Axum server (HTTPS with TLS)
     let server_state = app_state.clone();
     let port = cfg.port;
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = server::start_server(server_state, port).await {
+        if let Err(e) = server::start_server(server_state, port, true).await {
             tracing::error!("Failed to start server: {}", e);
         }
     });

@@ -19,6 +19,18 @@ async fn spawn_test_server(max_file_size_mb: u64) -> (String, std::path::PathBuf
     let db = Database::new_in_memory().unwrap();
     let state = AppState::new(cfg, db);
 
+    // Register test device secret so tests pass both with and without dev_plain_http feature
+    let dev = clipsync_desktop_lib::storage::DeviceRow {
+        id: "test-device".to_string(),
+        name: "Test Phone".to_string(),
+        platform: "android".to_string(),
+        secret_hash: clipsync_desktop_lib::server::auth::hash_secret("dev-token-clipsync"),
+        created_at: 1000,
+        last_seen: 1000,
+        revoked: false,
+    };
+    state.database.insert_device(&dev).unwrap();
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let router = clipsync_desktop_lib::server::routes::create_router(state.clone());
