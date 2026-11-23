@@ -24,17 +24,56 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             "open" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
                     let _ = window.set_focus();
                 }
             }
             "pause" => {
-                info!("Toggled pause receiving");
+                if let Some(state) = app.try_state::<std::sync::Arc<crate::state::AppState>>() {
+                    let was_paused = state.is_paused.fetch_xor(true, std::sync::atomic::Ordering::SeqCst);
+                    let new_state = !was_paused;
+                    info!("Toggled pause receiving from tray: is_paused={}", new_state);
+                }
             }
             "send_clip" => {
-                info!("Send clipboard triggered from tray");
+                if let Some(state) = app.try_state::<std::sync::Arc<crate::state::AppState>>() {
+                    let state = (*state).clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Ok(mut clip) = arboard::Clipboard::new() {
+                            if let Ok(text) = clip.get_text() {
+                                if !text.is_empty() {
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs() as i64;
+                                    let msg = crate::server::ws::WsServerMessage::Text {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        kind: "text".to_string(),
+                                        content: text,
+                                        ts: now,
+                                    };
+                                    let clients = state.ws_clients.read().await;
+                                    for tx in clients.values() {
+                                        let _ = tx.send(msg.clone());
+                                    }
+                                    info!("Tray: Sent clipboard text to {} connected clients", clients.len());
+                                }
+                            }
+                        }
+                    });
+                }
             }
             "folder" => {
-                info!("Open folder triggered from tray");
+                if let Some(state) = app.try_state::<std::sync::Arc<crate::state::AppState>>() {
+                    let state = (*state).clone();
+                    tauri::async_runtime::spawn(async move {
+                        let folder = {
+                            let cfg = state.config.read().await;
+                            cfg.save_folder.clone()
+                        };
+                        let _ = crate::commands::open_folder(folder);
+                    });
+                }
             }
             "quit" => {
                 app.exit(0);
@@ -51,6 +90,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 let app = tray.app_handle();
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
+                    let _ = window.unminimize();
                     let _ = window.set_focus();
                 }
             }

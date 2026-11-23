@@ -1,6 +1,6 @@
 # ClipSync Progress Log
 
-## Current Status: Milestone M5 (Discovery) Complete ✅
+## Current Status: Milestone M6 (Windows Product UI & System Tray) Complete ✅
 
 | Milestone | Status | Description |
 |---|---|---|
@@ -10,49 +10,49 @@
 | **M3: Share Target & Tile** | ✅ Complete | Android share sheet, `QuickSendActivity`, `ClipboardTileService` |
 | **M4: Security & Pairing** | ✅ Complete | TLS generation, QR pairing, device secrets, pinned client |
 | **M5: Discovery** | ✅ Complete | mDNS registration, `nsd`, resolver fallback |
-| **M6: Windows Product** | ⏳ Pending (Next) | Tauri React UI, system tray, history SQLite, settings |
-| **M7: PC to Phone** | ⏳ Pending | WebSocket `/events`, clipboard watcher, global hotkey, phone notifications |
+| **M6: Windows Product** | ✅ Complete | Tauri React UI, system tray, history SQLite, settings |
+| **M7: PC to Phone** | ⏳ Pending (Next) | WebSocket `/events`, clipboard watcher, global hotkey, phone notifications |
 | **M8: Polish & Release** | ⏳ Pending | NSIS installer with firewall rule, release APK, error states |
 
+### Done in M6:
+- **Tauri IPC Commands & Real LAN / Security Data (`desktop/src-tauri/src/commands.rs`)**:
+  - `get_local_lan_ip()`: Identifies primary LAN IP using OS UDP routing table socket probe without transmitting packets, falling back safely to loopback.
+  - `get_pair_qr()`: Generates QR codes with real LAN IP and actual TLS certificate SHA-256 fingerprint from `state.cert_fingerprint` / TLS storage.
+  - `get_status()`: Returns local endpoint, port, connected devices count from `state.ws_clients`, running status, and `is_paused` flag.
+  - `copy_history_item()`: Copies text (arboard), images (decoded via `image` crate then arboard), or files (CF_HDROP via clipboard-win) using `state.clipboard_writer`.
+  - `open_folder()`: Invokes Windows Explorer to display files or directories (`explorer.exe`).
+  - `set_settings()` / `get_settings()`: Reads/writes `%APPDATA%/ClipSync/config.json` and updates live configuration.
+  - `configure_windows_autostart()`: Configures `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` for `ClipSync` with `--minimized` argument.
+  - `toggle_pause_receiving()` and `get_pause_status()`: Manages atomic receiving toggle.
+- **System Tray & Window Lifecycle (`desktop/src-tauri/src/tray.rs`, `src/lib.rs`, `tauri.conf.json`)**:
+  - Tray menu items: "Open", "Pause receiving", "Send clipboard to phone", "Open save folder", "Quit".
+  - Left click on tray icon restores, unminimizes, and focuses main window.
+  - Close-to-tray behavior: `tauri::WindowEvent::CloseRequested` calls `api.prevent_close()` and `window.hide()`.
+  - Single-instance protection: `tauri-plugin-single-instance` integrated to focus existing window if another instance launches.
+  - Minimized launch support: checks `--minimized` CLI argument to hide window at startup.
+- **History Retention & Periodic Cleanup (`desktop/src-tauri/src/storage/db.rs`, `src/lib.rs`)**:
+  - `Database::clean_retention(days, max_items)`: Deletes items older than cutoff timestamp and caps total items to `max_items`.
+  - Runs automatically on application startup and in a 24-hour periodic background task.
+- **React Frontend (`desktop/src/App.tsx`, `App.css`)**:
+  - Home tab: Status badge, local endpoint, connected phones count, receiving status badge, Pause/Resume button, push text form, recent transfers preview, and "Pair New Phone" modal with SVG QR code and 5-minute countdown.
+  - History tab: Newest first items list with kind badges, direction indicators, text/file details, Copy, Show in folder, Delete, and Clear History.
+  - Devices tab: Paired devices list with last seen timestamp and Revoke action.
+  - Settings tab: Inputs for Device Name, Port, Save Folder, Max File Size, Send Hotkey, History Retention Days, History Max Items, and checkboxes for text/links, images, videos as files, notifications, auto-send clipboard, and autostart with Windows.
+  - Help tab: Windows Firewall guide, Wi-Fi AP isolation advice, manual IP discovery, and security model overview.
+  - `npm run build`: Compiles cleanly with 0 TypeScript/Vite errors.
+- **Automated Product Tests (`desktop/src-tauri/tests/product_tests.rs`)**:
+  - `test_get_local_lan_ip_returns_valid_ip`: Verified valid IPv4 address parsing.
+  - `test_history_retention_days_and_count`: Verified pruning of items > 30 days and capping to max count.
+  - `test_database_crud_operations`: Verified insert, retrieve, single delete, and clear.
+  - `test_device_revocation_and_query`: Verified revocation flag and lookup rejection.
+  - `test_settings_serialization_and_defaults`: Verified config defaults and JSON round-trip serialization.
+  - All 42 tests in test suite pass (`cargo test`).
+
 ### Done in M5:
-- **Desktop mDNS Advertising & Lifecycle (`desktop/src-tauri/src/discovery.rs`, `src/lib.rs`, `src/state.rs`)**:
-  - Implemented `MdnsDiscovery` using `mdns-sd`.
-  - Registered service `_clipsync._tcp.local.` with instance name `ClipSync-<id[..8]>` and host `<instance>.local.`.
-  - Configured TXT records per Section 7 of SPEC:
-    - `id`: Server device UUID.
-    - `name`: PC computer name.
-    - `v`: "1".
-    - `fp`: First 16 lowercase hex characters of the TLS certificate DER SHA-256 fingerprint.
-  - Implemented dynamic lifecycle management:
-    - `register_service`: Clean registration with bound port.
-    - `unregister_service`: Clean removal from network.
-    - `update_service`: Dynamic port re-registration when port or network interface changes.
-    - Automatic `Drop` and `shutdown` unregistering service on application shutdown.
-  - Integrated mDNS service registration into Tauri application bootstrap immediately upon server binding in `lib.rs`.
-- **Desktop Automated Discovery Tests (`desktop/src-tauri/tests/discovery_tests.rs`)**:
-  - `test_mdns_service_info_builder_properties`: Verifies `_clipsync._tcp.local.` service type, instance name formatting, port, and TXT records (`id`, `name`, `v=1`, `fp` first 16 hex chars).
-  - `test_mdns_fingerprint_short_fallback`: Verifies graceful fallback on short fingerprints without out-of-bounds slicing.
-  - `test_mdns_registration_and_update_lifecycle`: Verifies initial registration, dynamic port update, unregistration, re-registration, and clean daemon shutdown.
-  - 37/37 tests passed on `cargo test` (21 unit tests, 3 discovery integration tests, 6 security integration tests, 7 server tests).
-- **Mobile PcResolver 3-Stage Discovery Pipeline (`mobile/lib/core/resolver.dart`)**:
-  - **Stage 1 (Cached Direct Probe)**: Attempts direct probe of cached host and port via `GET /api/v1/info` using `PinnedClient` and expected certificate fingerprint (1.5s timeout). Returns immediately if `info.deviceId == targetDeviceId` without performing mDNS network discovery.
-  - **Stage 2 (mDNS Fallback & Cache Update)**: If Stage 1 fails (e.g. PC IP changed after WiFi reconnect), initiates mDNS discovery for `_clipsync._tcp` via `nsd` (5s timeout). Filters by TXT record `id == targetDeviceId` if present, confirms via pinned `GET /info` probe. On verified match, automatically persists the new host and port to `SecureStore` via `updateHostAndPort` and returns `ResolvedHost`.
-  - **Stage 3 (Fallback)**: If mDNS search times out or fails to find matching device, returns `null` signaling offline state / manual entry fallback.
-  - Added dependency injection hooks (`probeHost` and `mdnsStream`) for decoupled unit testing.
-- **Mobile Automated Discovery Tests (`mobile/test/resolver_test.dart`)**:
-  - 10 tests in `test/resolver_test.dart`:
-    - Stage 1: Cached host works -> returns immediately without searching mDNS.
-    - Stage 1: Loads cached credentials automatically from SecureStore.
-    - Stage 2: Cached host fails (simulating PC IP change after WiFi reconnect) -> falls back to mDNS, discovers new IP:port, verifies device ID, and automatically updates SecureStore.
-    - Stage 2: Discovers service when TXT record has no id but /info probe matches.
-    - Stage 3: Both cached and mDNS fail -> returns null within configured timeout.
-    - Stage 3: Empty mDNS stream -> returns null after stream completes.
-    - Filtering: mDNS TXT `id` filtering ignores other devices on the network.
-    - Spoofing protection: Rejects service if /info returns a different device_id than target.
-    - Data models: `ResolvedHost` and `DiscoveredService` equality, hashCode, and TXT parsing.
-  - `flutter analyze` 0 issues, 46/46 tests passed.
-- **Acceptance Criteria Verification**:
-  - Verified phone resolves PC when IP changes (simulated network change) within < 10s with no manual user action.
+- Desktop mDNS advertising (`mdns-sd`) registering `_clipsync._tcp.local.` with TXT records `id`, `name`, `v=1`, `fp` (first 16 hex chars).
+- Dynamic mDNS update and unregistration on port/interface change.
+- Mobile `PcResolver` with 3-stage fallback: (1) cached host/port with `GET /info` (1.5s), (2) mDNS lookup with `nsd` (5s) and automatic cache update, (3) manual fallback.
+- 37/37 desktop tests and 46/46 mobile tests passed.
 
 ### Done in M4:
 - Desktop TLS with rcgen (ECDSA P-256, 10-year validity, SANs).
@@ -64,7 +64,7 @@
 
 ### Done in M3:
 - Configured Android manifest with `ACTION_SEND` and `ACTION_SEND_MULTIPLE`.
-- Configured `QuickSendActivity` (translucent foreground clip reader) and `ClipboardTileService` (Quick Settings tile).
+- Configured `QuickSendActivity` and `ClipboardTileService`.
 - Implemented `ShareReceiverScreen` dialog with progress bar, multi-item queue, > 50 MB rejection, success checkmark, auto-dismiss, and Retry/Close actions.
 - Wired stream listeners in `mobile/lib/main.dart` with `receive_sharing_intent`.
 - Enhanced `HomeScreen` clipboard sending with automatic HTTP link detection (`kind: 'link'`).
@@ -77,11 +77,11 @@
 - Added 13 automated unit tests in `mobile/test/transfer_service_test.dart`.
 - Verified live end-to-end against M1 dev server with matching SHA-256 hash.
 
-### Next (Milestone M6: Windows Product UI & System Tray):
-- Tauri React UI (Home, History, Devices, Settings, Help tabs).
-- System tray with context menu: Open, Pause receiving (toggle), Send clipboard to phone, Open save folder, Quit.
-- Single instance enforcement.
-- Autostart with Windows (`--minimized` to tray).
-- SQLite history retention cleanup (30 days or 500 items).
-- Live settings editing (`config.json`).
-- Firewall & network troubleshooting help page.
+### Next (Milestone M7: PC to Phone):
+- Desktop WebSocket `/api/v1/events` implementation (JSON messages: `hello`, `text`, `file_offer`, `ping`/`pong`).
+- Desktop clipboard watcher thread polling sequence number every 250ms (ignoring `last_written` and password managers via `ExcludeClipboardContentFromMonitorProcessing`).
+- Desktop global hotkey (default Ctrl+Shift+S) sending current clipboard text to connected phones.
+- Desktop "Send file to phone" registering file in in-memory offers map for 1 hour, emitting `file_offer`.
+- Mobile `EventsService`: keeps WebSocket alive with backoff (1s to 30s), ping/pong handling (answer pong on ping; reconnect after 2 missed).
+- Mobile foreground service (`specialUse` type with justification string) to receive while app is in background.
+- Mobile notifications with Copy action for text and Download action for file offers.

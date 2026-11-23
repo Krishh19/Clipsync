@@ -44,7 +44,30 @@ pub fn run() {
         Database::new_in_memory().expect("in-memory database fallback failed")
     });
 
+    // Run startup retention cleanup
+    if let Err(e) = db.clean_retention(cfg.retention_days, cfg.retention_max_items) {
+        tracing::warn!("Failed to run startup retention cleanup: {}", e);
+    }
+
     let app_state = AppState::new(cfg.clone(), db);
+
+    // Periodic daily retention cleanup
+    let periodic_state = app_state.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
+        loop {
+            interval.tick().await;
+            let (days, max_items) = {
+                let cfg = periodic_state.config.read().await;
+                (cfg.retention_days, cfg.retention_max_items)
+            };
+            if let Err(e) = periodic_state.database.clean_retention(days, max_items) {
+                tracing::warn!("Failed to run periodic retention cleanup: {}", e);
+            } else {
+                tracing::info!("Periodic retention cleanup completed");
+            }
+        }
+    });
 
     // Start background Axum server (HTTPS with TLS) and register mDNS
     let server_state = app_state.clone();
@@ -72,12 +95,34 @@ pub fn run() {
 
     let builder_state = app_state.clone();
 
+    use tauri::Manager;
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .manage(builder_state)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             if let Err(e) = tray::setup_tray(app.handle()) {
                 tracing::warn!("Failed to setup system tray: {}", e);
+            }
+
+            let args: Vec<String> = std::env::args().collect();
+            if args.iter().any(|arg| arg == "--minimized") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
             Ok(())
         })
@@ -95,6 +140,8 @@ pub fn run() {
             send_text_to_phone,
             send_file_to_phone,
             copy_history_item,
+            toggle_pause_receiving,
+            get_pause_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

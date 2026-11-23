@@ -35,6 +35,7 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub cert_fingerprint: Arc<RwLock<String>>,
     pub discovery: Arc<Option<crate::discovery::MdnsDiscovery>>,
+    pub is_paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -44,6 +45,7 @@ impl AppState {
         let clipboard_writer = ClipboardWriter::new(last_written.clone());
         let clipboard_watcher = ClipboardWatcher::new();
         let discovery = Arc::new(crate::discovery::MdnsDiscovery::new().ok());
+        let is_paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         Arc::new(Self {
             config: Arc::new(RwLock::new(cfg)),
@@ -59,6 +61,7 @@ impl AppState {
             rate_limiter: Arc::new(RateLimiter::default()),
             cert_fingerprint: Arc::new(RwLock::new(String::new())),
             discovery,
+            is_paused,
         })
     }
 

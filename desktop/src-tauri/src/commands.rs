@@ -14,6 +14,7 @@ pub struct ServerStatus {
     pub port: u16,
     pub connected_devices_count: usize,
     pub is_running: bool,
+    pub is_paused: bool,
 }
 
 #[derive(Serialize)]
@@ -21,6 +22,54 @@ pub struct QrCodeResponse {
     pub url: String,
     pub svg: String,
     pub expires_in_seconds: u64,
+}
+
+pub fn get_local_lan_ip() -> String {
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip();
+                if !ip.is_loopback() {
+                    return ip.to_string();
+                }
+            }
+        }
+    }
+    "127.0.0.1".to_string()
+}
+
+pub fn configure_windows_autostart(enable: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        if enable {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let cmd = format!("\"{}\" --minimized", exe_path.display());
+                let _ = std::process::Command::new("reg")
+                    .args(&[
+                        "add",
+                        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                        "/v",
+                        "ClipSync",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        &cmd,
+                        "/f",
+                    ])
+                    .status();
+            }
+        } else {
+            let _ = std::process::Command::new("reg")
+                .args(&[
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "ClipSync",
+                    "/f",
+                ])
+                .status();
+        }
+    }
 }
 
 #[tauri::command]
@@ -33,12 +82,14 @@ pub async fn get_status(state: State<'_, Arc<AppState>>) -> Result<ServerStatus,
         let clients = state.ws_clients.read().await;
         clients.len()
     };
+    let is_paused = state.is_paused.load(std::sync::atomic::Ordering::SeqCst);
 
     Ok(ServerStatus {
-        ip: "127.0.0.1".to_string(), // In full discovery, enumerates local network IPs
+        ip: get_local_lan_ip(),
         port,
         connected_devices_count: connected_count,
         is_running: true,
+        is_paused,
     })
 }
 
@@ -49,10 +100,22 @@ pub async fn get_pair_qr(state: State<'_, Arc<AppState>>) -> Result<QrCodeRespon
         (cfg.port, cfg.server_device_id.clone(), cfg.device_name.clone())
     };
 
-    let cert_fp = "0000000000000000000000000000000000000000000000000000000000000000";
+    let fp = {
+        let f = state.cert_fingerprint.read().await;
+        if f.is_empty() {
+            let tls_dir = crate::config::app_data_dir().join("tls");
+            crate::server::tls::get_or_create_tls_certs(&tls_dir, &server_name)
+                .map(|t| t.fingerprint)
+                .unwrap_or_else(|_| "0000000000000000000000000000000000000000000000000000000000000000".to_string())
+        } else {
+            f.clone()
+        }
+    };
+
+    let ip = get_local_lan_ip();
     let qr = state
         .pairing_manager
-        .get_qr_data("127.0.0.1", port, cert_fp, &server_id, &server_name)
+        .get_qr_data(&ip, port, &fp, &server_id, &server_name)
         .await
         .ok_or_else(|| "Failed to generate QR code".to_string())?;
 
@@ -112,17 +175,32 @@ pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<AppConfig, 
 #[tauri::command]
 pub async fn set_settings(state: State<'_, Arc<AppState>>, settings: AppConfig) -> Result<(), String> {
     settings.save().map_err(|e| e.to_string())?;
+    configure_windows_autostart(settings.start_with_windows);
     let mut lock = state.config.write().await;
     *lock = settings;
     Ok(())
 }
 
 #[tauri::command]
+pub async fn toggle_pause_receiving(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    let current = state.is_paused.load(std::sync::atomic::Ordering::SeqCst);
+    let new_val = !current;
+    state.is_paused.store(new_val, std::sync::atomic::Ordering::SeqCst);
+    Ok(new_val)
+}
+
+#[tauri::command]
+pub async fn get_pause_status(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(state.is_paused.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+#[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        let clean = path.replace('/', "\\");
         std::process::Command::new("explorer")
-            .arg(path)
+            .arg(clean)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -233,26 +311,30 @@ pub async fn send_file_to_phone(
 
 #[tauri::command]
 pub async fn copy_history_item(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
-    let items = state.database.list_items(100).map_err(|e| e.to_string())?;
+    let items = state.database.list_items(200).map_err(|e| e.to_string())?;
     let item = items
         .into_iter()
         .find(|i| i.id == id)
         .ok_or_else(|| "Item not found".to_string())?;
 
-    if let Some(text) = item.text {
-        state.clipboard_writer.write_text(&text);
-        return Ok(());
-    }
-
-    if let Some(file_path) = item.file_path {
-        let path = std::path::Path::new(&file_path);
-        if item.kind == "image" {
-            state.clipboard_writer.write_image(path);
-        } else {
-            state.clipboard_writer.write_file_list(&[&file_path]);
+    if let Some(ref text) = item.text {
+        if state.clipboard_writer.write_text(text) {
+            return Ok(());
         }
-        return Ok(());
     }
 
-    Err("No content to copy".to_string())
+    if let Some(ref file_path) = item.file_path {
+        let path = std::path::Path::new(file_path);
+        if item.kind == "image" {
+            if state.clipboard_writer.write_image(path) {
+                return Ok(());
+            }
+        } else {
+            if state.clipboard_writer.write_file_list(&[file_path.as_str()]) {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("Failed to copy item to clipboard".to_string())
 }

@@ -7,6 +7,7 @@ interface ServerStatus {
   port: number;
   connected_devices_count: number;
   is_running: boolean;
+  is_paused?: boolean;
 }
 
 interface DeviceRow {
@@ -63,7 +64,7 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   // Browser dev mock fallback
   console.log(`[Tauri Mock Invoke] ${cmd}`, args);
   if (cmd === "get_status") {
-    return { ip: "192.168.1.100", port: 47821, connected_devices_count: 1, is_running: true } as T;
+    return { ip: "192.168.1.100", port: 47821, connected_devices_count: 1, is_running: true, is_paused: false } as T;
   }
   if (cmd === "list_devices") {
     return [
@@ -190,6 +191,25 @@ export function App() {
     }
   };
 
+  const handleTogglePause = async () => {
+    try {
+      const paused = await tauriInvoke<boolean>("toggle_pause_receiving");
+      showToast(paused ? "Clipboard receiving paused" : "Clipboard receiving resumed");
+      loadData();
+    } catch (e) {
+      showToast(`Toggle pause failed: ${e}`);
+    }
+  };
+
+  const handleOpenFolder = async (path?: string) => {
+    try {
+      await tauriInvoke("open_folder", { path: path || settings?.save_folder });
+      showToast("Opened in Explorer");
+    } catch (e) {
+      showToast(`Open folder failed: ${e}`);
+    }
+  };
+
   const handleCopyHistory = async (id: string) => {
     try {
       await tauriInvoke("copy_history_item", { id });
@@ -279,9 +299,18 @@ export function App() {
                   <span className="metric-label">Connected Phones</span>
                   <span className="metric-val">{status?.connected_devices_count ?? 0}</span>
                 </div>
-                <button className="primary-btn pair-btn" onClick={openQrModal}>
-                  + Pair New Phone
-                </button>
+                <div className="metric">
+                  <span className="metric-label">Receiving Status</span>
+                  <span className="metric-val">{status?.is_paused ? "Paused" : "Active"}</span>
+                </div>
+                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                  <button className="primary-btn pair-btn" style={{ flex: 1 }} onClick={openQrModal}>
+                    + Pair New Phone
+                  </button>
+                  <button className="btn-sm" onClick={handleTogglePause}>
+                    {status?.is_paused ? "Resume" : "Pause"}
+                  </button>
+                </div>
               </div>
 
               <div className="card">
@@ -359,6 +388,9 @@ export function App() {
                       </div>
                       <div className="item-actions">
                         <button className="btn-sm" onClick={() => handleCopyHistory(item.id)}>Copy</button>
+                        {item.file_path && (
+                          <button className="btn-sm" onClick={() => handleOpenFolder(item.file_path)}>Folder</button>
+                        )}
                         <button className="btn-sm text-danger" onClick={() => handleDeleteHistory(item.id)}>Delete</button>
                       </div>
                     </li>
@@ -509,6 +541,37 @@ export function App() {
                   className="input-text"
                   value={settings.send_hotkey}
                   onChange={(e) => setSettings({ ...settings, send_hotkey: e.target.value })}
+                />
+              </div>
+
+              <div className="toggle-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.start_with_windows}
+                    onChange={(e) => setSettings({ ...settings, start_with_windows: e.target.checked })}
+                  />
+                  <span>Start with Windows (launch to tray)</span>
+                </label>
+              </div>
+
+              <div className="setting-group">
+                <label>History Retention (Days)</label>
+                <input
+                  type="number"
+                  className="input-text"
+                  value={settings.retention_days}
+                  onChange={(e) => setSettings({ ...settings, retention_days: Number(e.target.value) })}
+                />
+              </div>
+
+              <div className="setting-group">
+                <label>History Max Items</label>
+                <input
+                  type="number"
+                  className="input-text"
+                  value={settings.retention_max_items}
+                  onChange={(e) => setSettings({ ...settings, retention_max_items: Number(e.target.value) })}
                 />
               </div>
 
