@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  desktop-test:
+    name: Desktop Test & Lint
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install Desktop Frontend Dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Lint and Build Desktop Frontend
+        working-directory: desktop
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Run Desktop Rust Tests
+        working-directory: desktop/src-tauri
+        run: cargo test --verbose
+
+  mobile-test:
+    name: Mobile Test & Analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Mobile Dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Run Flutter Analyzer
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Run Flutter Unit and Widget Tests
+        working-directory: mobile
+        run: flutter test

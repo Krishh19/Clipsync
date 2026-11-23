@@ -34,3 +34,6 @@
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 -dontwarn kotlin.**
 -dontwarn kotlinx.coroutines.**
+
+# Play Core deferred components
+-dontwarn com.google.android.play.core.**
