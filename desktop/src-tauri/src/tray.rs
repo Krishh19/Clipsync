@@ -39,27 +39,8 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(state) = app.try_state::<std::sync::Arc<crate::state::AppState>>() {
                     let state = (*state).clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Ok(mut clip) = arboard::Clipboard::new() {
-                            if let Ok(text) = clip.get_text() {
-                                if !text.is_empty() {
-                                    let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs() as i64;
-                                    let msg = crate::server::ws::WsServerMessage::Text {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        kind: "text".to_string(),
-                                        content: text,
-                                        ts: now,
-                                    };
-                                    let clients = state.ws_clients.read().await;
-                                    for tx in clients.values() {
-                                        let _ = tx.send(msg.clone());
-                                    }
-                                    info!("Tray: Sent clipboard text to {} connected clients", clients.len());
-                                }
-                            }
-                        }
+                        let sent = crate::hotkey::send_clipboard_to_connected_phones(state).await;
+                        info!("Tray send clipboard result: {}", sent);
                     });
                 }
             }

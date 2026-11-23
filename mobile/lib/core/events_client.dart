@@ -6,6 +6,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'models.dart';
 import 'pinned_client.dart';
 
+typedef WebSocketChannelFactory = WebSocketChannel Function(
+  Uri uri, {
+  Map<String, dynamic>? headers,
+  dynamic customClient,
+});
+
 /// WebSocket client that connects to PC /events with certificate pinning and auto-reconnect
 class EventsClient {
   final String host;
@@ -14,9 +20,11 @@ class EventsClient {
   final String secret;
   final void Function(WsEvent event)? onEvent;
   final void Function(Object error)? onError;
+  final WebSocketChannelFactory? channelFactory;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
+  Timer? _reconnectTimer;
   bool _disposed = false;
   int _backoffSeconds = 1;
 
@@ -27,28 +35,41 @@ class EventsClient {
     required this.secret,
     this.onEvent,
     this.onError,
+    this.channelFactory,
   });
+
+  int get backoffSeconds => _backoffSeconds;
+  bool get isConnected => _channel != null && !_disposed;
+
+  /// Calculates exponential backoff clamped between 1 and 30 seconds
+  static int calculateNextBackoff(int current) => (current * 2).clamp(1, 30);
 
   void connect() {
     if (_disposed) return;
+    _reconnectTimer?.cancel();
 
     try {
       final customHttpClient = PinnedClient.createHttpClient(fingerprint);
       final uri = Uri.parse('wss://$host:$port/api/v1/events');
 
-      final channel = IOWebSocketChannel.connect(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $secret',
-        },
-        customClient: customHttpClient,
-      );
+      final channel = channelFactory != null
+          ? channelFactory!(
+              uri,
+              headers: {'Authorization': 'Bearer $secret'},
+              customClient: customHttpClient,
+            )
+          : IOWebSocketChannel.connect(
+              uri,
+              headers: {'Authorization': 'Bearer $secret'},
+              customClient: customHttpClient,
+            );
 
       _channel = channel;
-      _backoffSeconds = 1;
 
       _subscription = channel.stream.listen(
         (data) {
+          // Reset backoff on successful communication
+          _backoffSeconds = 1;
           _handleMessage(data);
         },
         onError: (err) {
@@ -86,21 +107,30 @@ class EventsClient {
   void _scheduleReconnect() {
     if (_disposed) return;
     _subscription?.cancel();
+    _subscription = null;
     _channel = null;
 
     final delay = Duration(seconds: _backoffSeconds);
-    _backoffSeconds = (_backoffSeconds * 2).clamp(1, 30);
+    _backoffSeconds = calculateNextBackoff(_backoffSeconds);
 
-    Timer(delay, () {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () {
       if (!_disposed) {
         connect();
       }
     });
   }
 
+  void resetBackoff() {
+    _backoffSeconds = 1;
+  }
+
   void dispose() {
     _disposed = true;
+    _reconnectTimer?.cancel();
     _subscription?.cancel();
+    _subscription = null;
     _channel?.sink.close();
+    _channel = null;
   }
 }

@@ -35,6 +35,8 @@ pub enum WsServerMessage {
     },
     #[serde(rename = "ping")]
     Ping,
+    #[serde(rename = "pong")]
+    Pong,
 }
 
 pub async fn handle_ws_upgrade(
@@ -67,12 +69,26 @@ async fn handle_ws_socket(socket: WebSocket, state: Arc<AppState>, device_id: St
         let _ = sender.send(Message::Text(json)).await;
     }
 
-    // Ping interval task
+    let missed_pongs = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+    // Ping interval task: pings every 20s, terminates if 2 consecutive pongs missed
     let ping_tx = tx.clone();
+    let ping_missed = missed_pongs.clone();
+    let dev_id = device_id.clone();
     let ping_handle = tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(20));
+        // Consume the immediate first tick
+        ticker.tick().await;
         loop {
             ticker.tick().await;
+            let missed = ping_missed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if missed >= 2 {
+                info!(
+                    "WebSocket client {} missed {} consecutive pongs; closing connection",
+                    dev_id, missed
+                );
+                break;
+            }
             if ping_tx.send(WsServerMessage::Ping).await.is_err() {
                 break;
             }
@@ -97,17 +113,25 @@ async fn handle_ws_socket(socket: WebSocket, state: Arc<AppState>, device_id: St
     });
 
     // Inbound messages receiving task
+    let recv_missed = missed_pongs.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(msg_result) = receiver.next().await {
             match msg_result {
                 Ok(Message::Text(txt)) => {
                     debug!("Received WS text message: {}", txt);
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&txt) {
+                        if val.get("type").and_then(|t| t.as_str()) == Some("pong") {
+                            debug!("Resetting missed pongs on received json pong");
+                            recv_missed.store(0, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
                 }
                 Ok(Message::Close(_)) => {
                     break;
                 }
                 Ok(Message::Pong(_)) => {
-                    debug!("Received WS pong");
+                    debug!("Received WS pong control frame; resetting missed pongs");
+                    recv_missed.store(0, std::sync::atomic::Ordering::SeqCst);
                 }
                 Err(e) => {
                     debug!("WS error: {}", e);
@@ -121,9 +145,9 @@ async fn handle_ws_socket(socket: WebSocket, state: Arc<AppState>, device_id: St
     tokio::select! {
         _ = (&mut send_task) => {},
         _ = (&mut recv_task) => {},
+        _ = ping_handle => {},
     };
 
-    ping_handle.abort();
     send_task.abort();
     recv_task.abort();
 

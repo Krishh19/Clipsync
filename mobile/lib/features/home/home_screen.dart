@@ -72,6 +72,16 @@ class _HomeScreenState extends State<HomeScreen> {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text != null && text.isNotEmpty) {
+      if (LoopPrevention.isIncoming(text)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Clipboard text was received from PC (loop prevented)'),
+            ),
+          );
+        }
+        return;
+      }
       try {
         final kind = (text.startsWith('http://') || text.startsWith('https://'))
             ? 'link'

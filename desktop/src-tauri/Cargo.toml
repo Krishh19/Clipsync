@@ -18,6 +18,7 @@ dev_plain_http = []
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["stream", "json"] }
+tokio-tungstenite = "0.30.0"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -49,3 +50,4 @@ rand = "0.8"
 qrcode = "0.14"
 image = "0.25"
 tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"

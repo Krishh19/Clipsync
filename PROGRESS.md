@@ -1,6 +1,6 @@
 # ClipSync Progress Log
 
-## Current Status: Milestone M6 (Windows Product UI & System Tray) Complete ✅
+## Current Status: Milestone M7 (PC to Phone) Complete ✅
 
 | Milestone | Status | Description |
 |---|---|---|
@@ -11,42 +11,46 @@
 | **M4: Security & Pairing** | ✅ Complete | TLS generation, QR pairing, device secrets, pinned client |
 | **M5: Discovery** | ✅ Complete | mDNS registration, `nsd`, resolver fallback |
 | **M6: Windows Product** | ✅ Complete | Tauri React UI, system tray, history SQLite, settings |
-| **M7: PC to Phone** | ⏳ Pending (Next) | WebSocket `/events`, clipboard watcher, global hotkey, phone notifications |
-| **M8: Polish & Release** | ⏳ Pending | NSIS installer with firewall rule, release APK, error states |
+| **M7: PC to Phone** | ✅ Complete | WebSocket `/events`, clipboard watcher, global hotkey, phone notifications |
+| **M8: Polish & Release** | ⏳ Pending (Next) | NSIS installer with firewall rule, release APK, error states |
+
+### Done in M7:
+- **Desktop WebSocket `/events` Server (`desktop/src-tauri/src/server/ws.rs`)**:
+  - Implemented authenticated real-time streaming endpoint with Bearer auth and private IP checking.
+  - Immediate `hello` greeting upon connection: `{"type": "hello", "server_name": ..., "protocol": 1}`.
+  - Active 20-second ping loop with `AtomicU32` missed pong tracking. Disconnects client after 2 consecutive missed pongs.
+  - Real-time serialization and broadcast of `text` and `file_offer` events to connected phones.
+- **Desktop Clipboard Watcher & Loop Prevention (`desktop/src-tauri/src/clipboard/watcher.rs`, `src/lib.rs`)**:
+  - Dedicated thread polling clipboard sequence number every 250ms.
+  - Password manager protection: skips changes when `ExcludeClipboardContentFromMonitorProcessing` format is active.
+  - SHA-256 hash tracking skips `last_written_clipboard` echo writes.
+  - Automatic broadcast of `text` messages to connected phones when `auto_send_clipboard` is enabled.
+- **Desktop Global Hotkey & Tray Push (`desktop/src-tauri/src/hotkey.rs`, `src/lib.rs`, `src/tray.rs`)**:
+  - Global hotkey `Ctrl+Shift+S` via `tauri-plugin-global-shortcut` and System Tray "Send clipboard to phone" action.
+  - Reads clipboard text, updates `last_written_clipboard`, broadcasts `text` event to phones, and records `out` item in SQLite.
+- **Desktop File Offer Download Route (`desktop/src-tauri/src/server/routes.rs`)**:
+  - Serves registered file offers from in-memory offers map via `GET /api/v1/files/:id` with streaming body and `Content-Disposition`.
+- **Mobile EventsClient & Keepalive (`mobile/lib/core/events_client.dart`)**:
+  - Pinned TLS WebSocket client connecting to `wss://<host>:<port>/api/v1/events` with Bearer auth.
+  - Exponential backoff reconnect: 1s, 2s, 4s, 8s, 16s, clamped at 30s per SPEC.
+  - Automatic response to `ping` with `{"type": "pong"}`.
+- **Mobile EventsService & Notifications (`mobile/lib/services/events_service.dart`, `notifications.dart`)**:
+  - Incoming `text` events: flags content in `LoopPrevention`, displays notification with "Copy" action. Tapping Copy writes to Android clipboard and saves in SQLite history (`status: 'done'`).
+  - Incoming `file_offer` events: displays notification with "Download" action. Tapping Download streams file to external Downloads directory via `GET /api/v1/files/:id` and saves in SQLite history.
+- **Mobile Echo Loop Prevention (`mobile/lib/core/loop_prevention.dart`)**:
+  - LRU-capped hash cache tracking incoming content from PC. `TransferService` and `HomeScreen` prevent any received content from echoing back to the PC.
+- **Android 14+ Foreground Service (`mobile/lib/services/foreground_service.dart`, `AndroidManifest.xml`)**:
+  - Configured `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE` permissions with `specialUse` type and justification string.
+- **Automated Test Suites**:
+  - Desktop: 46/46 tests passed in `cargo test` across 6 test suites (unit, security, discovery, product, server, events).
+  - Mobile: 56/56 tests passed in `flutter test` across all suites (events, resolver, pairing, share receiver, transfer service, widgets). `flutter analyze` 0 issues.
 
 ### Done in M6:
-- **Tauri IPC Commands & Real LAN / Security Data (`desktop/src-tauri/src/commands.rs`)**:
-  - `get_local_lan_ip()`: Identifies primary LAN IP using OS UDP routing table socket probe without transmitting packets, falling back safely to loopback.
-  - `get_pair_qr()`: Generates QR codes with real LAN IP and actual TLS certificate SHA-256 fingerprint from `state.cert_fingerprint` / TLS storage.
-  - `get_status()`: Returns local endpoint, port, connected devices count from `state.ws_clients`, running status, and `is_paused` flag.
-  - `copy_history_item()`: Copies text (arboard), images (decoded via `image` crate then arboard), or files (CF_HDROP via clipboard-win) using `state.clipboard_writer`.
-  - `open_folder()`: Invokes Windows Explorer to display files or directories (`explorer.exe`).
-  - `set_settings()` / `get_settings()`: Reads/writes `%APPDATA%/ClipSync/config.json` and updates live configuration.
-  - `configure_windows_autostart()`: Configures `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` for `ClipSync` with `--minimized` argument.
-  - `toggle_pause_receiving()` and `get_pause_status()`: Manages atomic receiving toggle.
-- **System Tray & Window Lifecycle (`desktop/src-tauri/src/tray.rs`, `src/lib.rs`, `tauri.conf.json`)**:
-  - Tray menu items: "Open", "Pause receiving", "Send clipboard to phone", "Open save folder", "Quit".
-  - Left click on tray icon restores, unminimizes, and focuses main window.
-  - Close-to-tray behavior: `tauri::WindowEvent::CloseRequested` calls `api.prevent_close()` and `window.hide()`.
-  - Single-instance protection: `tauri-plugin-single-instance` integrated to focus existing window if another instance launches.
-  - Minimized launch support: checks `--minimized` CLI argument to hide window at startup.
-- **History Retention & Periodic Cleanup (`desktop/src-tauri/src/storage/db.rs`, `src/lib.rs`)**:
-  - `Database::clean_retention(days, max_items)`: Deletes items older than cutoff timestamp and caps total items to `max_items`.
-  - Runs automatically on application startup and in a 24-hour periodic background task.
-- **React Frontend (`desktop/src/App.tsx`, `App.css`)**:
-  - Home tab: Status badge, local endpoint, connected phones count, receiving status badge, Pause/Resume button, push text form, recent transfers preview, and "Pair New Phone" modal with SVG QR code and 5-minute countdown.
-  - History tab: Newest first items list with kind badges, direction indicators, text/file details, Copy, Show in folder, Delete, and Clear History.
-  - Devices tab: Paired devices list with last seen timestamp and Revoke action.
-  - Settings tab: Inputs for Device Name, Port, Save Folder, Max File Size, Send Hotkey, History Retention Days, History Max Items, and checkboxes for text/links, images, videos as files, notifications, auto-send clipboard, and autostart with Windows.
-  - Help tab: Windows Firewall guide, Wi-Fi AP isolation advice, manual IP discovery, and security model overview.
-  - `npm run build`: Compiles cleanly with 0 TypeScript/Vite errors.
-- **Automated Product Tests (`desktop/src-tauri/tests/product_tests.rs`)**:
-  - `test_get_local_lan_ip_returns_valid_ip`: Verified valid IPv4 address parsing.
-  - `test_history_retention_days_and_count`: Verified pruning of items > 30 days and capping to max count.
-  - `test_database_crud_operations`: Verified insert, retrieve, single delete, and clear.
-  - `test_device_revocation_and_query`: Verified revocation flag and lookup rejection.
-  - `test_settings_serialization_and_defaults`: Verified config defaults and JSON round-trip serialization.
-  - All 42 tests in test suite pass (`cargo test`).
+- React UI pages (Home, History, Devices, Settings, Help).
+- System tray with context menu (Open, Pause receiving, Send clipboard, Open folder, Quit) and single instance protection.
+- History retention cleanup (startup and 24h background task) pruning items > 30 days and enforcing 500 items max limit.
+- Settings persistence in `%APPDATA%/ClipSync/config.json` with registry autostart.
+- 42/42 desktop tests and 46/46 mobile tests passed.
 
 ### Done in M5:
 - Desktop mDNS advertising (`mdns-sd`) registering `_clipsync._tcp.local.` with TXT records `id`, `name`, `v=1`, `fp` (first 16 hex chars).
@@ -66,22 +70,17 @@
 - Configured Android manifest with `ACTION_SEND` and `ACTION_SEND_MULTIPLE`.
 - Configured `QuickSendActivity` and `ClipboardTileService`.
 - Implemented `ShareReceiverScreen` dialog with progress bar, multi-item queue, > 50 MB rejection, success checkmark, auto-dismiss, and Retry/Close actions.
-- Wired stream listeners in `mobile/lib/main.dart` with `receive_sharing_intent`.
-- Enhanced `HomeScreen` clipboard sending with automatic HTTP link detection (`kind: 'link'`).
-- Added 8 automated tests in `mobile/test/share_receiver_test.dart`.
+- 8 tests in `share_receiver_test.dart`.
 
 ### Done in M2:
 - Built dev connection screen (`mobile/lib/features/home/dev_screen.dart`, route `/dev`).
 - Implemented text sender with <= 1 MB limit and UUID deduplication.
 - Implemented file picker & streaming sender with <= 50 MB limit, progress callback, and network retry policy.
-- Added 13 automated unit tests in `mobile/test/transfer_service_test.dart`.
-- Verified live end-to-end against M1 dev server with matching SHA-256 hash.
+- 13 automated unit tests in `transfer_service_test.dart`.
 
-### Next (Milestone M7: PC to Phone):
-- Desktop WebSocket `/api/v1/events` implementation (JSON messages: `hello`, `text`, `file_offer`, `ping`/`pong`).
-- Desktop clipboard watcher thread polling sequence number every 250ms (ignoring `last_written` and password managers via `ExcludeClipboardContentFromMonitorProcessing`).
-- Desktop global hotkey (default Ctrl+Shift+S) sending current clipboard text to connected phones.
-- Desktop "Send file to phone" registering file in in-memory offers map for 1 hour, emitting `file_offer`.
-- Mobile `EventsService`: keeps WebSocket alive with backoff (1s to 30s), ping/pong handling (answer pong on ping; reconnect after 2 missed).
-- Mobile foreground service (`specialUse` type with justification string) to receive while app is in background.
-- Mobile notifications with Copy action for text and Download action for file offers.
+### Next (Milestone M8: Polish & Release):
+- Friendly error messages and empty states across desktop and mobile.
+- App icons (desktop and Android mipmap).
+- Windows NSIS installer that automatically adds the Windows Firewall inbound rule (`netsh advfirewall firewall add rule name="ClipSync" dir=in action=allow protocol=TCP localport=47821`).
+- Release APK instructions.
+- README.md with comprehensive setup, architecture, and network troubleshooting guide.

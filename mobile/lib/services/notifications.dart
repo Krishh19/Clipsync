@@ -8,6 +8,10 @@ class NotificationsService {
   static const String channelName = 'ClipSync Notifications';
   static const String channelDescription = 'ClipSync incoming content notifications';
 
+  /// Hook for testing notification dispatch without Android OS
+  static void Function(int id, String title, String? body, String? payload)?
+      onNotificationShownForTest;
+
   static Future<void> initialize({
     void Function(NotificationResponse response)? onNotificationTapped,
   }) async {
@@ -27,6 +31,8 @@ class NotificationsService {
     required String text,
   }) async {
     final preview = text.length > 80 ? '${text.substring(0, 80)}...' : text;
+    onNotificationShownForTest?.call(id, 'From $senderName', preview, text);
+
     const androidDetails = AndroidNotificationDetails(
       channelId,
       channelName,
@@ -39,13 +45,17 @@ class NotificationsService {
     );
 
     const details = NotificationDetails(android: androidDetails);
-    await _notificationsPlugin.show(
-      id: id,
-      title: 'From $senderName',
-      body: preview,
-      notificationDetails: details,
-      payload: text,
-    );
+    try {
+      await _notificationsPlugin.show(
+        id: id,
+        title: 'From $senderName',
+        body: preview,
+        notificationDetails: details,
+        payload: text,
+      );
+    } catch (_) {
+      // In test or headless environment without native notification manager
+    }
   }
 
   static Future<void> showFileOffer({
@@ -53,7 +63,11 @@ class NotificationsService {
     required String senderName,
     required String fileName,
     required String fileId,
+    int? size,
   }) async {
+    final payload = '$fileId|$fileName';
+    onNotificationShownForTest?.call(id, 'From $senderName offered file', fileName, payload);
+
     const androidDetails = AndroidNotificationDetails(
       channelId,
       channelName,
@@ -66,12 +80,16 @@ class NotificationsService {
     );
 
     const details = NotificationDetails(android: androidDetails);
-    await _notificationsPlugin.show(
-      id: id,
-      title: 'From $senderName offered file',
-      body: fileName,
-      notificationDetails: details,
-      payload: fileId,
-    );
+    try {
+      await _notificationsPlugin.show(
+        id: id,
+        title: 'From $senderName offered file',
+        body: fileName,
+        notificationDetails: details,
+        payload: payload,
+      );
+    } catch (_) {
+      // In test or headless environment without native notification manager
+    }
   }
 }

@@ -27,7 +27,11 @@ class TransferService {
 
   /// Enqueues text to send to PC.
   /// Validates <= 1 MB limit per SPEC before enqueueing.
+  /// Checks LoopPrevention to prevent echo loops of content received from PC.
   Future<TransferItem> sendText(String content, {String kind = 'text'}) async {
+    if (LoopPrevention.isIncoming(content)) {
+      throw const LoopDetectedException();
+    }
     final bytes = utf8.encode(content);
     if (bytes.length > maxTextSizeBytes) {
       throw ArgumentError(

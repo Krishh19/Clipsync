@@ -69,6 +69,60 @@ pub fn run() {
         }
     });
 
+    // Start clipboard watcher thread
+    let watcher_state = app_state.clone();
+    app_state.clipboard_watcher.start(
+        app_state.last_written_clipboard.clone(),
+        move |text| {
+            let state = watcher_state.clone();
+            tauri::async_runtime::spawn(async move {
+                if state.is_paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let auto_send = {
+                    let cfg = state.config.read().await;
+                    cfg.auto_send_clipboard
+                };
+                if !auto_send {
+                    return;
+                }
+                let has_clients = {
+                    let clients = state.ws_clients.read().await;
+                    !clients.is_empty()
+                };
+                if !has_clients {
+                    return;
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let id = uuid::Uuid::new_v4().to_string();
+                let msg = server::ws::WsServerMessage::Text {
+                    id: id.clone(),
+                    kind: "text".to_string(),
+                    content: text.clone(),
+                    ts: now,
+                };
+                state.broadcast_ws_message(msg).await;
+
+                let item = storage::ItemRow {
+                    id,
+                    direction: "out".to_string(),
+                    kind: "text".to_string(),
+                    device_id: None,
+                    text: Some(text),
+                    file_path: None,
+                    file_name: None,
+                    mime: Some("text/plain".to_string()),
+                    size: None,
+                    created_at: now,
+                };
+                let _ = state.database.insert_item(&item);
+            });
+        },
+    );
+
     // Start background Axum server (HTTPS with TLS) and register mDNS
     let server_state = app_state.clone();
     let port = cfg.port;
@@ -94,6 +148,17 @@ pub fn run() {
     });
 
     let builder_state = app_state.clone();
+    let hotkey_state = app_state.clone();
+    let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(move |_app, _shortcut, event| {
+            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                let state = hotkey_state.clone();
+                tauri::async_runtime::spawn(async move {
+                    hotkey::send_clipboard_to_connected_phones(state).await;
+                });
+            }
+        })
+        .build();
 
     use tauri::Manager;
 
@@ -106,6 +171,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(shortcut_plugin)
         .manage(builder_state)
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -116,6 +182,20 @@ pub fn run() {
         .setup(|app| {
             if let Err(e) = tray::setup_tray(app.handle()) {
                 tracing::warn!("Failed to setup system tray: {}", e);
+            }
+
+            let send_hotkey = {
+                let state = app.state::<std::sync::Arc<AppState>>();
+                let cfg = state.config.blocking_read();
+                cfg.send_hotkey.clone()
+            };
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+            if let Ok(shortcut) = send_hotkey.parse::<Shortcut>() {
+                if let Err(e) = app.global_shortcut().register(shortcut) {
+                    tracing::warn!("Failed to register global hotkey {}: {}", send_hotkey, e);
+                } else {
+                    tracing::info!("Registered global hotkey: {}", send_hotkey);
+                }
             }
 
             let args: Vec<String> = std::env::args().collect();

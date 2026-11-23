@@ -1,4 +1,5 @@
 import 'dart:convert';
+export 'loop_prevention.dart';
 export 'pairing_models.dart';
 
 /// Information returned by GET /api/v1/info

@@ -62,13 +62,23 @@ pub struct TextResponse {
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/v1/info", get(get_info))
+        .route("/info", get(get_info))
         .route("/api/v1/pair", post(post_pair))
+        .route("/pair", post(post_pair))
         .route("/api/v1/pair", delete(delete_pair))
+        .route("/pair", delete(delete_pair))
         .route("/api/v1/pair/qr", get(get_pair_qr_endpoint))
+        .route("/pair/qr", get(get_pair_qr_endpoint))
         .route("/api/v1/text", post(post_text))
+        .route("/text", post(post_text))
         .route("/api/v1/file", post(post_file))
+        .route("/file", post(post_file))
+        .route("/api/v1/files", post(post_file))
+        .route("/files", post(post_file))
         .route("/api/v1/files/:id", get(get_file))
+        .route("/files/:id", get(get_file))
         .route("/api/v1/events", get(get_events))
+        .route("/events", get(get_events))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -319,6 +329,14 @@ async fn get_file(
         axum::http::header::CONTENT_TYPE,
         offer.mime.parse().unwrap_or(axum::http::HeaderValue::from_static("application/octet-stream")),
     );
+    response_headers.insert(
+        axum::http::header::CONTENT_LENGTH,
+        offer.size.to_string().parse().unwrap_or(axum::http::HeaderValue::from_static("0")),
+    );
+    let disposition = format!("attachment; filename=\"{}\"", offer.name);
+    if let Ok(val) = disposition.parse() {
+        response_headers.insert(axum::http::header::CONTENT_DISPOSITION, val);
+    }
 
     Ok((StatusCode::OK, response_headers, body))
 }
