@@ -34,6 +34,7 @@ pub struct AppState {
     pub client_id_dedup: Arc<ClientIdDedup>,
     pub rate_limiter: Arc<RateLimiter>,
     pub cert_fingerprint: Arc<RwLock<String>>,
+    pub discovery: Arc<Option<crate::discovery::MdnsDiscovery>>,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
         let last_written = Arc::new(Mutex::new(None));
         let clipboard_writer = ClipboardWriter::new(last_written.clone());
         let clipboard_watcher = ClipboardWatcher::new();
+        let discovery = Arc::new(crate::discovery::MdnsDiscovery::new().ok());
 
         Arc::new(Self {
             config: Arc::new(RwLock::new(cfg)),
@@ -56,6 +58,7 @@ impl AppState {
             client_id_dedup: Arc::new(ClientIdDedup::default()),
             rate_limiter: Arc::new(RateLimiter::default()),
             cert_fingerprint: Arc::new(RwLock::new(String::new())),
+            discovery,
         })
     }
 

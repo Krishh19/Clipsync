@@ -12,7 +12,6 @@ pub mod tray;
 
 use commands::*;
 use config::AppConfig;
-use discovery::MdnsDiscovery;
 use state::AppState;
 use storage::Database;
 use tracing::info;
@@ -47,24 +46,29 @@ pub fn run() {
 
     let app_state = AppState::new(cfg.clone(), db);
 
-    // Start background Axum server (HTTPS with TLS)
+    // Start background Axum server (HTTPS with TLS) and register mDNS
     let server_state = app_state.clone();
     let port = cfg.port;
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = server::start_server(server_state, port, true).await {
-            tracing::error!("Failed to start server: {}", e);
+        match server::start_server(server_state.clone(), port, true).await {
+            Ok(handle) => {
+                let (device_id, device_name, fp) = {
+                    let cfg = server_state.config.read().await;
+                    let fp = server_state.cert_fingerprint.read().await;
+                    (cfg.server_device_id.clone(), cfg.device_name.clone(), fp.clone())
+                };
+
+                if let Some(ref discovery) = *server_state.discovery {
+                    if let Err(e) = discovery.register_service(&device_id, &device_name, handle.port, &fp) {
+                        tracing::warn!("Failed to register mDNS service: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to start server: {}", e);
+            }
         }
     });
-
-    // Start mDNS discovery service
-    if let Ok(discovery) = MdnsDiscovery::new() {
-        let _ = discovery.register_service(
-            &cfg.server_device_id,
-            &cfg.device_name,
-            cfg.port,
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        );
-    }
 
     let builder_state = app_state.clone();
 
