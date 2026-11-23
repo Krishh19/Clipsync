@@ -1,20 +1,66 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/models.dart';
+import '../../data/secure_store.dart';
+import '../../services/transfer_service.dart';
+import 'dev_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final SecureStore? secureStore;
+  final TransferService? transferService;
+
+  const HomeScreen({super.key, this.secureStore, this.transferService});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  late final SecureStore _secureStore;
+  late final TransferService _transferService;
+
   final TextEditingController _textController = TextEditingController();
-  final List<TransferItem> _recentTransfers = [];
-  final String _connectionStatus = 'Offline';
-  final String _pcName = 'Not Paired';
+  List<TransferItem> _recentTransfers = [];
+  String _connectionStatus = 'Offline';
+  String _pcName = 'Not Paired';
+
+  @override
+  void initState() {
+    super.initState();
+    _secureStore = widget.secureStore ?? SecureStore();
+    _transferService = widget.transferService ??
+        TransferService(secureStore: _secureStore);
+
+    _loadPcInfo();
+
+    _transferService.queueStream.listen((items) {
+      if (mounted) {
+        setState(() {
+          _recentTransfers = List.from(items);
+        });
+      }
+    });
+  }
+
+  void _loadPcInfo() async {
+    final isDev = await _secureStore.isDevMode();
+    final name = await _secureStore.getPcName();
+    final host = await _secureStore.getPcHost();
+    if (mounted) {
+      setState(() {
+        if (name != null || host != null) {
+          _pcName = name ?? host ?? 'Paired PC';
+          _connectionStatus = isDev ? 'Dev Mode' : 'Connected';
+        } else {
+          _pcName = 'Not Paired';
+          _connectionStatus = 'Offline';
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -24,8 +70,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _sendClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text != null && data!.text!.isNotEmpty) {
-      _addTransfer(data.text!, 'text');
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      try {
+        await _transferService.sendText(text);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Clipboard text queued for transfer')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Send error: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -35,29 +98,76 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _sendText() {
+  void _sendText() async {
     final text = _textController.text.trim();
-    if (text.isNotEmpty) {
-      _addTransfer(text, 'text');
+    if (text.isEmpty) return;
+
+    try {
+      await _transferService.sendText(text);
       _textController.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Text queued for transfer')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Send error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
-  void _addTransfer(String label, String kind) {
-    setState(() {
-      _recentTransfers.insert(
-        0,
-        TransferItem(
-          id: UniqueKey().toString(),
-          direction: 'out',
-          kind: kind,
-          label: label,
-          size: label.length,
-          status: 'done',
-          createdAt: DateTime.now().millisecondsSinceEpoch,
-        ),
+  void _pickAndSendFile({FileType type = FileType.any}) async {
+    try {
+      final files = await FilePicker.pickFiles(type: type);
+      if (files.isEmpty) return;
+
+      final path = files.first.path;
+      if (path == null) return;
+
+      final file = File(path);
+      final size = await file.length();
+
+      // Reject files > 50 MB on client per SPEC Section 10 & 12
+      if (size > 50 * 1024 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'File exceeds 50 MB limit (${(size / (1024 * 1024)).toStringAsFixed(1)} MB)',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      await _transferService.sendFile(
+        file,
+        fileName: files.first.name,
       );
-    });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File queued: ${files.first.name}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('File picker error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -66,6 +176,22 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('ClipSync'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.developer_mode),
+            tooltip: 'Dev Connection (M2)',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DevScreen(
+                    secureStore: _secureStore,
+                    transferService: _transferService,
+                  ),
+                ),
+              );
+              _loadPcInfo();
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             onPressed: () {
@@ -104,7 +230,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildConnectionChip() {
     Color chipColor = Colors.grey;
-    if (_connectionStatus == 'Connected') chipColor = Colors.green;
+    if (_connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode') {
+      chipColor = Colors.green;
+    }
     if (_connectionStatus == 'Searching') chipColor = Colors.orange;
 
     return Center(
@@ -159,16 +287,12 @@ class _HomeScreenState extends State<HomeScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         OutlinedButton.icon(
-          onPressed: () {
-            // Pick photo / video
-          },
+          onPressed: () => _pickAndSendFile(type: FileType.media),
           icon: const Icon(Icons.photo_library),
           label: const Text('Photo/Video'),
         ),
         OutlinedButton.icon(
-          onPressed: () {
-            // Pick file
-          },
+          onPressed: () => _pickAndSendFile(type: FileType.any),
           icon: const Icon(Icons.attach_file),
           label: const Text('File'),
         ),
@@ -205,15 +329,34 @@ class _HomeScreenState extends State<HomeScreen> {
                     : Icons.text_snippet,
           ),
           title: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(item.status),
-          trailing: item.status == 'failed'
-              ? IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: () {
-                    // Retry
-                  },
-                )
-              : const Icon(Icons.check_circle, color: Colors.green),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Status: ${item.status} • Size: ${(item.size / 1024).toStringAsFixed(1)} KB',
+              ),
+              if (item.status == 'sending') ...[
+                const SizedBox(height: 4),
+                LinearProgressIndicator(value: item.progress),
+              ],
+              if (item.error != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  item.error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 11),
+                ),
+              ],
+            ],
+          ),
+          trailing: item.status == 'done'
+              ? const Icon(Icons.check_circle, color: Colors.green)
+              : item.status == 'failed'
+                  ? const Icon(Icons.error, color: Colors.red)
+                  : const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
         );
       },
     );

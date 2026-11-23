@@ -10,6 +10,7 @@ class SecureStore {
   static const _keyPcPort = 'pc.port';
   static const _keyPcFingerprint = 'pc.fingerprint';
   static const _keyPcSecret = 'pc.secret';
+  static const _keyIsDevMode = 'pc.dev_mode';
 
   final FlutterSecureStorage _storage;
 
@@ -38,6 +39,30 @@ class SecureStore {
 
   Future<String?> getPcFingerprint() => _storage.read(key: _keyPcFingerprint);
   Future<String?> getPcSecret() => _storage.read(key: _keyPcSecret);
+  Future<bool> isDevMode() async {
+    final v = await _storage.read(key: _keyIsDevMode);
+    return v == 'true';
+  }
+
+  Future<void> setDevMode(bool isDev) async {
+    await _storage.write(key: _keyIsDevMode, value: isDev.toString());
+  }
+
+  Future<void> saveDevConfig({
+    String host = '127.0.0.1',
+    int port = 47821,
+    String token = 'dev-token-clipsync',
+  }) async {
+    await Future.wait([
+      _storage.write(key: _keyPcHost, value: host),
+      _storage.write(key: _keyPcPort, value: port.toString()),
+      _storage.write(key: _keyPcSecret, value: token),
+      _storage.write(key: _keyPcName, value: 'Dev PC ($host:$port)'),
+      _storage.write(key: _keyPcDeviceId, value: 'dev-pc-id'),
+      _storage.write(key: _keyPcFingerprint, value: 'dev'),
+      _storage.write(key: _keyIsDevMode, value: 'true'),
+    ]);
+  }
 
   Future<bool> isPaired() async {
     final secret = await getPcSecret();

@@ -118,8 +118,11 @@ class TransferItem {
   final String direction; // 'in' or 'out'
   final String kind; // 'text', 'link', 'image', 'video', 'file'
   final String label;
+  final String? content; // for text
+  final String? filePath; // for file
   final int size;
   final String status; // 'queued', 'sending', 'done', 'failed'
+  final double progress; // 0.0 to 1.0
   final String? error;
   final int createdAt;
 
@@ -128,14 +131,18 @@ class TransferItem {
     required this.direction,
     required this.kind,
     required this.label,
+    this.content,
+    this.filePath,
     required this.size,
     required this.status,
+    this.progress = 0.0,
     this.error,
     required this.createdAt,
   });
 
   TransferItem copyWith({
     String? status,
+    double? progress,
     String? error,
   }) {
     return TransferItem(
@@ -143,8 +150,11 @@ class TransferItem {
       direction: direction,
       kind: kind,
       label: label,
+      content: content,
+      filePath: filePath,
       size: size,
       status: status ?? this.status,
+      progress: progress ?? this.progress,
       error: error ?? this.error,
       createdAt: createdAt,
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'features/history/history_screen.dart';
+import 'features/home/dev_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/pairing/pairing_screen.dart';
 import 'features/settings/settings_screen.dart';
@@ -18,6 +19,10 @@ final _router = GoRouter(
     GoRoute(
       path: '/pair',
       builder: (context, state) => const PairingScreen(),
+    ),
+    GoRoute(
+      path: '/dev',
+      builder: (context, state) => const DevScreen(),
     ),
     GoRoute(
       path: '/history',

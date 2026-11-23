@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
@@ -6,6 +7,9 @@ import 'models.dart';
 import 'pinned_client.dart';
 
 class ApiClient {
+  static const int maxTextSizeBytes = 1024 * 1024; // 1 MB limit per SPEC
+  static const int maxFileSizeBytes = 50 * 1024 * 1024; // 50 MB limit per SPEC
+
   final Dio dio;
 
   ApiClient({required this.dio});
@@ -13,15 +17,32 @@ class ApiClient {
   factory ApiClient.fromConfig({
     required String host,
     required int port,
-    required String fingerprint,
+    String? fingerprint,
     String? deviceSecret,
+    bool isDevPlainHttp = false,
   }) {
-    final baseUrl = 'https://$host:$port/api/v1';
-    final dio = PinnedClient.createDio(
-      baseUrl: baseUrl,
-      expectedFingerprint: fingerprint,
-      bearerToken: deviceSecret,
-    );
+    final scheme = isDevPlainHttp ? 'http' : 'https';
+    final baseUrl = '$scheme://$host:$port/api/v1';
+    final Dio dio;
+    if (isDevPlainHttp || fingerprint == null || fingerprint.isEmpty || fingerprint == 'dev') {
+      dio = Dio(
+        BaseOptions(
+          baseUrl: baseUrl,
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 30),
+          headers: {
+            if (deviceSecret != null && deviceSecret.isNotEmpty)
+              'Authorization': 'Bearer $deviceSecret',
+          },
+        ),
+      );
+    } else {
+      dio = PinnedClient.createDio(
+        baseUrl: baseUrl,
+        expectedFingerprint: fingerprint,
+        bearerToken: deviceSecret,
+      );
+    }
     return ApiClient(dio: dio);
   }
 
@@ -61,6 +82,12 @@ class ApiClient {
     String kind = 'text',
     String? clientId,
   }) async {
+    final bytes = utf8.encode(content);
+    if (bytes.length > maxTextSizeBytes) {
+      throw ArgumentError(
+        'Text size (${bytes.length} bytes) exceeds maximum limit of 1 MB',
+      );
+    }
     final id = clientId ?? const Uuid().v4();
     final response = await dio.post<Map<String, dynamic>>(
       '/text',
@@ -82,6 +109,11 @@ class ApiClient {
     void Function(int sent, int total)? onProgress,
   }) async {
     final length = await file.length();
+    if (length > maxFileSizeBytes) {
+      throw ArgumentError(
+        'File size ($length bytes) exceeds maximum limit of 50 MB',
+      );
+    }
     final id = clientId ?? const Uuid().v4();
     final encodedFileName = Uri.encodeComponent(fileName);
 
@@ -91,7 +123,7 @@ class ApiClient {
       options: Options(
         headers: {
           HttpHeaders.contentLengthHeader: length,
-          HttpHeaders.contentTypeHeader: mimeType ?? 'application/octet-stream',
+          HttpHeaders.contentTypeHeader: mimeType ?? inferMimeType(fileName),
           'X-File-Name': encodedFileName,
           'X-Client-Id': id,
         },
@@ -100,6 +132,21 @@ class ApiClient {
     );
 
     return response.data ?? {};
+  }
+
+  static String inferMimeType(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.mov')) return 'video/quicktime';
+    if (lower.endsWith('.mkv')) return 'video/x-matroska';
+    if (lower.endsWith('.webm')) return 'video/webm';
+    if (lower.endsWith('.txt')) return 'text/plain';
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    return 'application/octet-stream';
   }
 
   /// GET /api/v1/files/{id}
