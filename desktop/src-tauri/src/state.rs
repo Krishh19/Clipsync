@@ -36,6 +36,7 @@ pub struct AppState {
     pub cert_fingerprint: Arc<RwLock<String>>,
     pub discovery: Arc<Option<crate::discovery::MdnsDiscovery>>,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
+    pub server_handle: Arc<Mutex<Option<crate::server::ServerHandle>>>,
 }
 
 impl AppState {
@@ -62,6 +63,7 @@ impl AppState {
             cert_fingerprint: Arc::new(RwLock::new(String::new())),
             discovery,
             is_paused,
+            server_handle: Arc::new(Mutex::new(None)),
         })
     }
 

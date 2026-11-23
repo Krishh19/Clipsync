@@ -71,8 +71,9 @@ pub async fn start_server(
         let handle = axum_server::Handle::new();
         let server_handle = handle.clone();
         tokio::spawn(async move {
-            let _ = shutdown_rx.await;
-            server_handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+            if let Ok(()) = shutdown_rx.await {
+                server_handle.graceful_shutdown(Some(std::time::Duration::from_secs(2)));
+            }
         });
 
         tokio::spawn(async move {
@@ -88,10 +89,15 @@ pub async fn start_server(
         info!("ClipSync HTTP server running on http://{}", addr);
         let listener = tokio::net::TcpListener::bind(addr).await?;
         tokio::spawn(async move {
+            let shutdown_signal = async move {
+                if let Ok(()) = shutdown_rx.await {
+                    // intentional shutdown
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
             if let Err(e) = axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
+                .with_graceful_shutdown(shutdown_signal)
                 .await
             {
                 tracing::error!("Server error: {}", e);

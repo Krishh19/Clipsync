@@ -140,6 +140,7 @@ pub fn run() {
                         tracing::warn!("Failed to register mDNS service: {}", e);
                     }
                 }
+                *server_state.server_handle.lock().unwrap() = Some(handle);
             }
             Err(e) => {
                 tracing::error!("Failed to start server: {}", e);
