@@ -80,4 +80,37 @@ mod tests {
         assert_eq!(sanitize_filename("test..."), "test");
         assert_eq!(sanitize_filename("test.txt."), "test.txt");
     }
+
+    #[test]
+    fn test_sanitize_unicode() {
+        assert_eq!(sanitize_filename("日本語ファイル.txt"), "日本語ファイル.txt");
+        assert_eq!(sanitize_filename("über_größe_café.png"), "über_größe_café.png");
+    }
+
+    #[test]
+    fn test_sanitize_length_cap_120() {
+        let long_stem = "a".repeat(150);
+        let long_file = format!("{long_stem}.pdf");
+        let sanitized = sanitize_filename(&long_file);
+        assert_eq!(sanitized.chars().count(), 120);
+        assert!(sanitized.ends_with(".pdf"));
+
+        let long_no_ext = "b".repeat(150);
+        let sanitized_no_ext = sanitize_filename(&long_no_ext);
+        assert_eq!(sanitized_no_ext.chars().count(), 120);
+    }
+
+    #[test]
+    fn test_sanitize_control_and_invalid_chars() {
+        assert_eq!(sanitize_filename("foo\x00bar\n\t.txt"), "foobar.txt");
+        assert_eq!(sanitize_filename("hello:world?*<>.txt"), "helloworld.txt");
+    }
+
+    #[test]
+    fn test_sanitize_reserved_case_insensitivity() {
+        assert_eq!(sanitize_filename("prn.txt"), "_prn.txt");
+        assert_eq!(sanitize_filename("Aux.dat"), "_Aux.dat");
+        assert_eq!(sanitize_filename("cOm1.log"), "_cOm1.log");
+        assert_eq!(sanitize_filename("LPT9"), "_LPT9");
+    }
 }

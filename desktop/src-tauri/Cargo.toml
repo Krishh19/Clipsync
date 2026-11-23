@@ -16,6 +16,9 @@ tauri-build = { version = "2", features = [] }
 default = []
 dev_plain_http = []
 
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["stream", "json"] }
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"

@@ -1,12 +1,12 @@
 # ClipSync Progress Log
 
-## Current Status: Milestone M0 (Skeleton) Complete ✅
+## Current Status: Milestone M1 (Rust Server Dev Mode) Complete ✅
 
 | Milestone | Status | Description |
 |---|---|---|
 | **M0: Skeleton** | ✅ Complete | Repository layout, Tauri 2 desktop app, Flutter mobile app, build verification |
-| **M1: Rust Server Dev Mode** | ⏳ Pending (Next) | Axum server, `/info`, `/text`, `/file` dev mode, clipboard write, file save |
-| **M2: Flutter Sender MVP** | ⏳ Pending | Dev screen, manual host/token, text send, file upload |
+| **M1: Rust Server Dev Mode** | ✅ Complete | Axum server, `/info`, `/text`, `/file` dev mode, clipboard write, file save |
+| **M2: Flutter Sender MVP** | ⏳ Pending (Next) | Dev screen, manual host/token, text send, file upload |
 | **M3: Share Target & Tile** | ⏳ Pending | Android share sheet, `QuickSendActivity`, `ClipboardTileService` |
 | **M4: Security & Pairing** | ⏳ Pending | TLS generation, QR pairing, device secrets, pinned client |
 | **M5: Discovery** | ⏳ Pending | mDNS registration, `nsd`, resolver fallback |
@@ -14,30 +14,33 @@
 | **M7: PC to Phone** | ⏳ Pending | WebSocket `/events`, clipboard watcher, global hotkey, phone notifications |
 | **M8: Polish & Release** | ⏳ Pending | NSIS installer with firewall rule, release APK, error states |
 
-### Done in M0:
-- Initialized Git repository and set up root documentation (`docs/SPEC.md`, `docs/PROTOCOL.md`, `README.md`, `PROGRESS.md`, `DECISIONS.md`, `.gitignore`).
-- Verified local toolchains: Rust 1.100, MSVC v143, Flutter 3.50, Android SDK 37, Node 22.
-- **Desktop (`desktop/`)**:
-  - Scaffolding complete per Section 6 of SPEC.
-  - Rust backend modules in `src-tauri/`: `main.rs`, `lib.rs`, `state.rs`, `config.rs`, `commands.rs`, `tray.rs`, `discovery.rs`, `pairing.rs`, `hotkey.rs`, `notify.rs`, `clipboard/` (`watcher.rs`, `writer.rs`), `server/` (`routes.rs`, `auth.rs`, `tls.rs`, `upload.rs`, `ws.rs`, `errors.rs`, `ratelimit.rs`), `storage/` (`db.rs`, `files.rs`, `sanitize.rs`).
-  - React/TypeScript frontend with tabs for Home, History, Devices, Settings, Help.
-  - `cargo check`: Passed (0 errors, 0 warnings).
-  - `cargo test`: Passed (all 3 unit tests passed).
-  - `cargo build`: Passed (`clipsync-desktop.exe` binary built).
-  - `npm run build`: Passed (TypeScript check & Vite production bundle created).
-- **Mobile (`mobile/`)**:
-  - Scaffolding complete per Section 6 and Section 10 of SPEC.
-  - Riverpod, GoRouter, Dio, Drift, and Kotlin native services configured.
-  - Modules in `lib/`: `core/` (pinned client, resolver, models, api/events clients), `data/` (Drift database, secure store), `services/` (transfers, events, notifications), `features/` (home, history, pairing, settings, share receiver).
-  - Native Kotlin stubs: `MainActivity.kt`, `QuickSendActivity.kt`, `ClipboardTileService.kt`.
-  - AndroidManifest configured with permissions (`INTERNET`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`) and intent filters for `ACTION_SEND` and `ACTION_SEND_MULTIPLE`.
-  - `flutter analyze`: Passed (0 issues).
-  - `flutter test`: Passed (all smoke tests passed).
-  - `flutter build apk --debug`: Passed (`build/app/outputs/flutter-apk/app-debug.apk` built).
+### Done in M1:
+- Configured `dev_plain_http` feature in `desktop/src-tauri/Cargo.toml`.
+- Configured static dev token authentication (`dev-token-clipsync`).
+- Implemented `GET /api/v1/info` returning `name`, `device_id`, and `protocol: 1`.
+- Implemented `POST /api/v1/text`:
+  - Enforced 1 MB maximum text payload limit (returns 413 if exceeded).
+  - Implemented 60-second in-memory client ID deduplication.
+  - Connected `arboard` clipboard writer to automatically copy incoming text/links to the Windows clipboard.
+  - Inserted history records into SQLite database.
+- Implemented `POST /api/v1/file`:
+  - Enforced `Content-Length` header check (returns 413 immediately if > 50 MB or missing).
+  - Streamed body to `.partial/<uuid>` while counting bytes; aborted, deleted partial file, and returned 413 if byte count exceeded 50 MB.
+  - Filename sanitization (Windows reserved names, path traversal, control chars, trailing dots/spaces, 120-char limit).
+  - Handled duplicate filenames with unique suffixes (`name (1).ext`).
+  - Saved files to `Downloads/ClipSync`.
+- Created standalone `src/bin/dev_server.rs` running plain HTTP on port 47821.
+- Added 20 unit and integration tests (`tests/server_tests.rs`):
+  - 13 unit tests for dedup, filename sanitizing, auth, and streaming byte limit abort with cleanup.
+  - 7 integration tests for all endpoints, limits, and auth.
+- **Verification Results**:
+  - `cargo test --features dev_plain_http`: 20 passed, 0 failed.
+  - `curl` `GET /api/v1/info`: Verified 200 with name and device_id.
+  - `curl` `POST /api/v1/text`: Verified 201 response and text verified on Windows clipboard with `Get-Clipboard`.
+  - `curl` `POST /api/v1/file`: Verified 201 response and file saved cleanly to `Downloads/ClipSync`.
+  - `curl` 51 MB upload: Verified 413 response and 0 leftover files in `.partial/`.
 
-### Next (Milestone M1):
-- Implement plain HTTP dev server behind `dev_plain_http` feature with static dev token.
-- Implement `/info`, `/text`, `/file` with byte limits and filename sanitizing.
-- Write text to Windows clipboard via `arboard`.
-- Save files to `Downloads/ClipSync`.
-- Verify curl integration tests and unit tests.
+### Next (Milestone M2):
+- Build Flutter sender MVP dev screen with host, port, and token fields.
+- Implement text send and file picker / sender with progress callback.
+- Verify text sent from Flutter appears on PC clipboard and files transfer with identical SHA-256.

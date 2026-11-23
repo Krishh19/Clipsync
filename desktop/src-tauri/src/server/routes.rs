@@ -140,6 +140,15 @@ async fn post_text(
     }
 
     let id = Uuid::new_v4().to_string();
+
+    // Check client_id deduplication (within 60s)
+    if let Some(ref client_id) = req.client_id {
+        if let Some(existing_id) = state.client_id_dedup.check_or_insert(client_id, &id) {
+            // Repeat seen within 60 s: return 201 with existing id, skip duplicate write/db
+            return Ok((StatusCode::CREATED, Json(TextResponse { id: existing_id })));
+        }
+    }
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

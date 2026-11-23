@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod dedup;
 pub mod errors;
 pub mod ratelimit;
 pub mod routes;
@@ -14,29 +15,51 @@ use tracing::info;
 use crate::state::AppState;
 
 pub struct ServerHandle {
+    pub port: u16,
     pub shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 pub async fn start_server(
     state: Arc<AppState>,
-    port: u16,
+    start_port: u16,
 ) -> Result<ServerHandle, Box<dyn std::error::Error + Send + Sync>> {
-    let router = routes::create_router(state.clone());
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let mut listener = None;
+    let mut bound_port = start_port;
 
+    for p in start_port..=start_port.saturating_add(20) {
+        let addr = SocketAddr::from(([0, 0, 0, 0], p));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                listener = Some(l);
+                bound_port = p;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Port {} unavailable: {}, trying next port...", p, e);
+            }
+        }
+    }
+
+    let listener = listener.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            format!("All ports from {} to {} are busy", start_port, start_port.saturating_add(20)),
+        )
+    })?;
+
+    // Update config with the actual bound port
+    {
+        let mut cfg = state.config.write().await;
+        cfg.port = bound_port;
+    }
+
+    let bound_addr = SocketAddr::from(([0, 0, 0, 0], bound_port));
+    info!("ClipSync server bound to {}", bound_addr);
+
+    let router = routes::create_router(state.clone());
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    info!("Starting ClipSync server on {}", addr);
-
     tokio::spawn(async move {
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                tracing::error!("Failed to bind server to {}: {}", addr, e);
-                return;
-            }
-        };
-
         if let Err(e) = axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = shutdown_rx.await;
@@ -48,6 +71,7 @@ pub async fn start_server(
     });
 
     Ok(ServerHandle {
+        port: bound_port,
         shutdown_tx: Some(shutdown_tx),
     })
 }
