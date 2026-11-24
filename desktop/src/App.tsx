@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import logoSvg from "./assets/logo.svg";
 import "./App.css";
 
 // Interface definitions matching Rust models
@@ -421,7 +422,7 @@ export default function App() {
       {/* Header */}
       <header className="header">
         <div className="brand">
-          <div className="brand-logo">CS</div>
+          <img src={logoSvg} alt="ClipSync" className="brand-logo-img" />
           <div>
             <h1 className="brand-title">ClipSync</h1>
             <p className="brand-subtitle">Seamless Local Clipboard & File Sync</p>
