@@ -11,6 +11,7 @@ class Transfers extends Table {
   TextColumn get direction => text()(); // 'in' or 'out'
   TextColumn get kind => text()(); // 'text', 'link', 'image', 'video', 'file'
   TextColumn get label => text()();
+  TextColumn get filePath => text().nullable()();
   IntColumn get size => integer()();
   TextColumn get status => text()(); // 'queued', 'sending', 'done', 'failed'
   TextColumn get error => text().nullable()();
@@ -25,7 +26,16 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.addColumn(transfers, transfers.filePath);
+          }
+        },
+      );
 }
 
 LazyDatabase _openConnection() {

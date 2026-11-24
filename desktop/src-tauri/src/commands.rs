@@ -204,7 +204,68 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| e.to_string())?;
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open::that(&path).map_err(|e| e.to_string())?;
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn open_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err("File not found".to_string());
+    }
+    open::that(p).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reveal_in_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let clean = path.replace('/', "\\");
+        std::process::Command::new("explorer")
+            .args([format!("/select,{}", clean)])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let p = std::path::Path::new(&path);
+        let folder = if p.is_file() {
+            p.parent().unwrap_or(p)
+        } else {
+            p
+        };
+        open::that(folder).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn read_image_base64(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err("File not found".to_string());
+    }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    let ext = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    };
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 #[tauri::command]

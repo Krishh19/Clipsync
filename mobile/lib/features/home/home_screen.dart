@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:io';
+import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/models.dart';
+import '../../data/db.dart';
 import '../../data/secure_store.dart';
 import '../../services/transfer_service.dart';
 import '../history/history_screen.dart';
+import '../media/photo_viewer_screen.dart';
+import '../media/text_detail_sheet.dart';
 import '../pairing/pairing_screen.dart';
 import '../settings/settings_screen.dart';
 import 'dev_screen.dart';
@@ -15,8 +20,14 @@ import 'dev_screen.dart';
 class HomeScreen extends StatefulWidget {
   final SecureStore? secureStore;
   final TransferService? transferService;
+  final AppDatabase? database;
 
-  const HomeScreen({super.key, this.secureStore, this.transferService});
+  const HomeScreen({
+    super.key,
+    this.secureStore,
+    this.transferService,
+    this.database,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -25,9 +36,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final SecureStore _secureStore;
   late final TransferService _transferService;
+  late final AppDatabase _db;
+  StreamSubscription<List<Transfer>>? _dbSubscription;
+  StreamSubscription<List<TransferItem>>? _queueSubscription;
 
   final TextEditingController _textController = TextEditingController();
   List<TransferItem> _recentTransfers = [];
+  List<Transfer> _persistedTransfers = [];
   String _connectionStatus = 'Offline';
   String _pcName = 'Not Paired';
 
@@ -35,15 +50,28 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _secureStore = widget.secureStore ?? SecureStore();
+    _db = widget.database ?? AppDatabase();
     _transferService = widget.transferService ??
-        TransferService(secureStore: _secureStore);
+        TransferService(secureStore: _secureStore, database: _db);
 
     _loadPcInfo();
 
-    _transferService.queueStream.listen((items) {
+    _queueSubscription = _transferService.queueStream.listen((items) {
       if (mounted) {
         setState(() {
           _recentTransfers = List.from(items);
+        });
+      }
+    });
+
+    _dbSubscription = (_db.select(_db.transfers)
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+          ..limit(10))
+        .watch()
+        .listen((items) {
+      if (mounted) {
+        setState(() {
+          _persistedTransfers = items;
         });
       }
     });
@@ -103,8 +131,91 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _queueSubscription?.cancel();
+    _dbSubscription?.cancel();
     _textController.dispose();
     super.dispose();
+  }
+
+  String _formatRelativeTime(int timestampMs) {
+    final now = DateTime.now();
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+    final diff = now.difference(dt);
+
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.month}/${dt.day}';
+  }
+
+  void _onPersistedItemTap(Transfer item) {
+    if (item.kind == 'image' && item.filePath != null && File(item.filePath!).existsSync()) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoViewerScreen(
+            filePath: item.filePath!,
+            title: item.label,
+            size: item.size,
+            createdAt: item.createdAt,
+          ),
+        ),
+      );
+    } else if (item.kind == 'text' || item.kind == 'link') {
+      TextDetailSheet.show(
+        context,
+        text: item.label,
+        direction: item.direction,
+        createdAt: item.createdAt,
+      );
+    } else {
+      Clipboard.setData(ClipboardData(text: item.label));
+      HapticFeedback.lightImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Copied "${item.label}" to clipboard'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Widget _buildLeadingThumbnail(Transfer item) {
+    if (item.kind == 'image' && item.filePath != null && File(item.filePath!).existsSync()) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.file(
+          File(item.filePath!),
+          width: 44,
+          height: 44,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _buildFallbackAvatar(item),
+        ),
+      );
+    }
+    return _buildFallbackAvatar(item);
+  }
+
+  Widget _buildFallbackAvatar(Transfer item) {
+    final isIncoming = item.direction == 'in';
+    return CircleAvatar(
+      backgroundColor: isIncoming
+          ? Colors.blue.withValues(alpha: 0.15)
+          : Colors.green.withValues(alpha: 0.15),
+      child: Icon(
+        item.kind == 'image'
+            ? Icons.image
+            : item.kind == 'video'
+                ? Icons.videocam
+                : item.kind == 'link'
+                    ? Icons.link
+                    : item.kind == 'file'
+                        ? Icons.attach_file
+                        : Icons.text_snippet,
+        color: isIncoming ? Colors.blue : Colors.green,
+      ),
+    );
   }
 
   void _sendClipboard() async {
@@ -285,9 +396,20 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
           _buildMediaButtons(),
           const SizedBox(height: 24),
-          const Text(
-            'Recent Transfers',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Recent Transfers',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              if (_persistedTransfers.isNotEmpty)
+                TextButton.icon(
+                  onPressed: _openHistory,
+                  icon: const Icon(Icons.arrow_forward, size: 16),
+                  label: const Text('View All'),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           _buildRecentTransfers(),
@@ -377,7 +499,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildRecentTransfers() {
-    if (_recentTransfers.isEmpty) {
+    final activeQueue = _recentTransfers.where((i) => i.status == 'sending' || i.status == 'queued').toList();
+    final hasNoTransfers = activeQueue.isEmpty && _persistedTransfers.isEmpty;
+
+    if (hasNoTransfers) {
       final isConnected =
           _connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode';
       return Card(
@@ -428,52 +553,87 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _recentTransfers.length,
-      separatorBuilder: (_, _) => const Divider(),
-      itemBuilder: (context, index) {
-        final item = _recentTransfers[index];
-        return ListTile(
-          leading: Icon(
-            item.kind == 'image'
-                ? Icons.image
-                : item.kind == 'video'
-                    ? Icons.videocam
-                    : Icons.text_snippet,
-          ),
-          title: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Status: ${item.status} • Size: ${(item.size / 1024).toStringAsFixed(1)} KB',
+    final displayItems = _persistedTransfers.take(6).toList();
+
+    return Column(
+      children: [
+        if (activeQueue.isNotEmpty) ...[
+          ...activeQueue.map((item) => Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              leading: const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              if (item.status == 'sending') ...[
-                const SizedBox(height: 4),
-                LinearProgressIndicator(value: item.progress),
-              ],
-              if (item.error != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  item.error!,
-                  style: const TextStyle(color: Colors.red, fontSize: 11),
+              title: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Sending... ${(item.size / 1024).toStringAsFixed(1)} KB'),
+                  const SizedBox(height: 4),
+                  LinearProgressIndicator(value: item.progress),
+                ],
+              ),
+            ),
+          )),
+        ],
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: displayItems.length,
+          separatorBuilder: (_, _) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final item = displayItems[index];
+            final isIncoming = item.direction == 'in';
+            final isImage = item.kind == 'image';
+
+            return ListTile(
+              leading: _buildLeadingThumbnail(item),
+              title: Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: Text(
+                '${isIncoming ? '← From PC' : '→ To PC'} • ${_formatRelativeTime(item.createdAt)} • ${(item.size / 1024).toStringAsFixed(1)} KB',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-              ],
-            ],
-          ),
-          trailing: item.status == 'done'
-              ? const Icon(Icons.check_circle, color: Colors.green)
-              : item.status == 'failed'
-                  ? const Icon(Icons.error, color: Colors.red)
-                  : const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isImage)
+                    IconButton(
+                      icon: const Icon(Icons.remove_red_eye, size: 20),
+                      tooltip: 'View Photo',
+                      onPressed: () => _onPersistedItemTap(item),
                     ),
-        );
-      },
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 20),
+                    tooltip: 'Copy',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: item.label));
+                      HapticFeedback.lightImpact();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Copied "${item.label}" to clipboard'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              onTap: () => _onPersistedItemTap(item),
+            );
+          },
+        ),
+      ],
     );
   }
 }

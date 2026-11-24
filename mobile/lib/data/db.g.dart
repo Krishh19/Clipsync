@@ -47,6 +47,17 @@ class $TransfersTable extends Transfers
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _filePathMeta = const VerificationMeta(
+    'filePath',
+  );
+  @override
+  late final GeneratedColumn<String> filePath = GeneratedColumn<String>(
+    'file_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _sizeMeta = const VerificationMeta('size');
   @override
   late final GeneratedColumn<int> size = GeneratedColumn<int>(
@@ -91,6 +102,7 @@ class $TransfersTable extends Transfers
     direction,
     kind,
     label,
+    filePath,
     size,
     status,
     error,
@@ -136,6 +148,12 @@ class $TransfersTable extends Transfers
       );
     } else if (isInserting) {
       context.missing(_labelMeta);
+    }
+    if (data.containsKey('file_path')) {
+      context.handle(
+        _filePathMeta,
+        filePath.isAcceptableOrUnknown(data['file_path']!, _filePathMeta),
+      );
     }
     if (data.containsKey('size')) {
       context.handle(
@@ -192,6 +210,10 @@ class $TransfersTable extends Transfers
         DriftSqlType.string,
         data['${effectivePrefix}label'],
       )!,
+      filePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_path'],
+      ),
       size: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}size'],
@@ -222,6 +244,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
   final String direction;
   final String kind;
   final String label;
+  final String? filePath;
   final int size;
   final String status;
   final String? error;
@@ -231,6 +254,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     required this.direction,
     required this.kind,
     required this.label,
+    this.filePath,
     required this.size,
     required this.status,
     this.error,
@@ -243,6 +267,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     map['direction'] = Variable<String>(direction);
     map['kind'] = Variable<String>(kind);
     map['label'] = Variable<String>(label);
+    if (!nullToAbsent || filePath != null) {
+      map['file_path'] = Variable<String>(filePath);
+    }
     map['size'] = Variable<int>(size);
     map['status'] = Variable<String>(status);
     if (!nullToAbsent || error != null) {
@@ -258,6 +285,9 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       direction: Value(direction),
       kind: Value(kind),
       label: Value(label),
+      filePath: filePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(filePath),
       size: Value(size),
       status: Value(status),
       error: error == null && nullToAbsent
@@ -277,6 +307,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       direction: serializer.fromJson<String>(json['direction']),
       kind: serializer.fromJson<String>(json['kind']),
       label: serializer.fromJson<String>(json['label']),
+      filePath: serializer.fromJson<String?>(json['filePath']),
       size: serializer.fromJson<int>(json['size']),
       status: serializer.fromJson<String>(json['status']),
       error: serializer.fromJson<String?>(json['error']),
@@ -291,6 +322,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       'direction': serializer.toJson<String>(direction),
       'kind': serializer.toJson<String>(kind),
       'label': serializer.toJson<String>(label),
+      'filePath': serializer.toJson<String?>(filePath),
       'size': serializer.toJson<int>(size),
       'status': serializer.toJson<String>(status),
       'error': serializer.toJson<String?>(error),
@@ -303,6 +335,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     String? direction,
     String? kind,
     String? label,
+    Value<String?> filePath = const Value.absent(),
     int? size,
     String? status,
     Value<String?> error = const Value.absent(),
@@ -312,6 +345,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
     direction: direction ?? this.direction,
     kind: kind ?? this.kind,
     label: label ?? this.label,
+    filePath: filePath.present ? filePath.value : this.filePath,
     size: size ?? this.size,
     status: status ?? this.status,
     error: error.present ? error.value : this.error,
@@ -323,6 +357,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
       direction: data.direction.present ? data.direction.value : this.direction,
       kind: data.kind.present ? data.kind.value : this.kind,
       label: data.label.present ? data.label.value : this.label,
+      filePath: data.filePath.present ? data.filePath.value : this.filePath,
       size: data.size.present ? data.size.value : this.size,
       status: data.status.present ? data.status.value : this.status,
       error: data.error.present ? data.error.value : this.error,
@@ -337,6 +372,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           ..write('direction: $direction, ')
           ..write('kind: $kind, ')
           ..write('label: $label, ')
+          ..write('filePath: $filePath, ')
           ..write('size: $size, ')
           ..write('status: $status, ')
           ..write('error: $error, ')
@@ -346,8 +382,17 @@ class Transfer extends DataClass implements Insertable<Transfer> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, direction, kind, label, size, status, error, createdAt);
+  int get hashCode => Object.hash(
+    id,
+    direction,
+    kind,
+    label,
+    filePath,
+    size,
+    status,
+    error,
+    createdAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -356,6 +401,7 @@ class Transfer extends DataClass implements Insertable<Transfer> {
           other.direction == this.direction &&
           other.kind == this.kind &&
           other.label == this.label &&
+          other.filePath == this.filePath &&
           other.size == this.size &&
           other.status == this.status &&
           other.error == this.error &&
@@ -367,6 +413,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
   final Value<String> direction;
   final Value<String> kind;
   final Value<String> label;
+  final Value<String?> filePath;
   final Value<int> size;
   final Value<String> status;
   final Value<String?> error;
@@ -377,6 +424,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     this.direction = const Value.absent(),
     this.kind = const Value.absent(),
     this.label = const Value.absent(),
+    this.filePath = const Value.absent(),
     this.size = const Value.absent(),
     this.status = const Value.absent(),
     this.error = const Value.absent(),
@@ -388,6 +436,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     required String direction,
     required String kind,
     required String label,
+    this.filePath = const Value.absent(),
     required int size,
     required String status,
     this.error = const Value.absent(),
@@ -405,6 +454,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Expression<String>? direction,
     Expression<String>? kind,
     Expression<String>? label,
+    Expression<String>? filePath,
     Expression<int>? size,
     Expression<String>? status,
     Expression<String>? error,
@@ -416,6 +466,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       if (direction != null) 'direction': direction,
       if (kind != null) 'kind': kind,
       if (label != null) 'label': label,
+      if (filePath != null) 'file_path': filePath,
       if (size != null) 'size': size,
       if (status != null) 'status': status,
       if (error != null) 'error': error,
@@ -429,6 +480,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     Value<String>? direction,
     Value<String>? kind,
     Value<String>? label,
+    Value<String?>? filePath,
     Value<int>? size,
     Value<String>? status,
     Value<String?>? error,
@@ -440,6 +492,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
       direction: direction ?? this.direction,
       kind: kind ?? this.kind,
       label: label ?? this.label,
+      filePath: filePath ?? this.filePath,
       size: size ?? this.size,
       status: status ?? this.status,
       error: error ?? this.error,
@@ -462,6 +515,9 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
     }
     if (label.present) {
       map['label'] = Variable<String>(label.value);
+    }
+    if (filePath.present) {
+      map['file_path'] = Variable<String>(filePath.value);
     }
     if (size.present) {
       map['size'] = Variable<int>(size.value);
@@ -488,6 +544,7 @@ class TransfersCompanion extends UpdateCompanion<Transfer> {
           ..write('direction: $direction, ')
           ..write('kind: $kind, ')
           ..write('label: $label, ')
+          ..write('filePath: $filePath, ')
           ..write('size: $size, ')
           ..write('status: $status, ')
           ..write('error: $error, ')
@@ -514,6 +571,7 @@ typedef $$TransfersTableCreateCompanionBuilder = TransfersCompanion Function({
   required String direction,
   required String kind,
   required String label,
+  Value<String?> filePath,
   required int size,
   required String status,
   Value<String?> error,
@@ -525,6 +583,7 @@ typedef $$TransfersTableUpdateCompanionBuilder = TransfersCompanion Function({
   Value<String> direction,
   Value<String> kind,
   Value<String> label,
+  Value<String?> filePath,
   Value<int> size,
   Value<String> status,
   Value<String?> error,
@@ -558,6 +617,11 @@ class $$TransfersTableFilterComposer
 
   ColumnFilters<String> get label => $composableBuilder(
     column: $table.label,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get filePath => $composableBuilder(
+    column: $table.filePath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -611,6 +675,11 @@ class $$TransfersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get filePath => $composableBuilder(
+    column: $table.filePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get size => $composableBuilder(
     column: $table.size,
     builder: (column) => ColumnOrderings(column),
@@ -652,6 +721,9 @@ class $$TransfersTableAnnotationComposer
 
   GeneratedColumn<String> get label =>
       $composableBuilder(column: $table.label, builder: (column) => column);
+
+  GeneratedColumn<String> get filePath =>
+      $composableBuilder(column: $table.filePath, builder: (column) => column);
 
   GeneratedColumn<int> get size =>
       $composableBuilder(column: $table.size, builder: (column) => column);
@@ -698,6 +770,7 @@ class $$TransfersTableTableManager
                 Value<String> direction = const Value.absent(),
                 Value<String> kind = const Value.absent(),
                 Value<String> label = const Value.absent(),
+                Value<String?> filePath = const Value.absent(),
                 Value<int> size = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<String?> error = const Value.absent(),
@@ -708,6 +781,7 @@ class $$TransfersTableTableManager
                 direction: direction,
                 kind: kind,
                 label: label,
+                filePath: filePath,
                 size: size,
                 status: status,
                 error: error,
@@ -720,6 +794,7 @@ class $$TransfersTableTableManager
                 required String direction,
                 required String kind,
                 required String label,
+                Value<String?> filePath = const Value.absent(),
                 required int size,
                 required String status,
                 Value<String?> error = const Value.absent(),
@@ -730,6 +805,7 @@ class $$TransfersTableTableManager
                 direction: direction,
                 kind: kind,
                 label: label,
+                filePath: filePath,
                 size: size,
                 status: status,
                 error: error,

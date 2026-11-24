@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
 // Interface definitions matching Rust models
@@ -55,6 +55,15 @@ interface QrData {
   expires_in_seconds: number;
 }
 
+interface PreviewImage {
+  id: string;
+  url: string;
+  fileName: string;
+  filePath: string;
+  size?: number;
+  date?: number;
+}
+
 // Safely invoke Tauri commands with browser fallback
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (typeof window !== "undefined" && (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
@@ -74,7 +83,8 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   if (cmd === "get_history") {
     return [
       { id: "item-1", direction: "in", kind: "text", text: "https://github.com/ClipSync/clipsync", created_at: Date.now() / 1000 - 60 },
-      { id: "item-2", direction: "in", kind: "image", file_name: "IMG_20261123.jpg", size: 2450000, created_at: Date.now() / 1000 - 1800 },
+      { id: "item-2", direction: "in", kind: "image", file_name: "IMG_20261123.jpg", file_path: "C:\\Downloads\\IMG_20261123.jpg", size: 2450000, created_at: Date.now() / 1000 - 1800 },
+      { id: "item-3", direction: "out", kind: "file", file_name: "Document_2026.pdf", file_path: "C:\\Documents\\Document_2026.pdf", size: 512000, created_at: Date.now() / 1000 - 3600 },
     ] as T;
   }
   if (cmd === "get_settings") {
@@ -102,10 +112,21 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
       expires_in_seconds: 300,
     } as T;
   }
+  if (cmd === "read_image_base64") {
+    return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><rect width='100' height='100' fill='%233b82f6'/><text x='50%' y='50%' fill='white' font-size='12' text-anchor='middle'>Photo</text></svg>" as T;
+  }
   return {} as T;
 }
 
-export function App() {
+function formatRelativeTime(timestampSec: number): string {
+  const diffSec = Math.floor(Date.now() / 1000 - timestampSec);
+  if (diffSec < 60) return "Just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return new Date(timestampSec * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+export default function App() {
   const [activeTab, setActiveTab] = useState<"home" | "history" | "devices" | "settings" | "help">("home");
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [devices, setDevices] = useState<DeviceRow[]>([]);
@@ -116,6 +137,20 @@ export function App() {
   const [countdown, setCountdown] = useState(300);
   const [quickSendText, setQuickSendText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+
+  // Media Viewer & Thumbnail states
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  // Search & Filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<"all" | "image" | "file" | "text" | "link">("all");
+
+  // Drag and Drop & File Upload states
+  const [isDragging, setIsDragging] = useState(false);
+  const [pendingFile, setPendingFile] = useState<{ path: string; name: string; size: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string) => {
     setMessage(msg);
@@ -128,10 +163,22 @@ export function App() {
       setStatus(s);
       const d = await tauriInvoke<DeviceRow[]>("list_devices");
       setDevices(d);
-      const h = await tauriInvoke<ItemRow[]>("get_history", { limit: 50 });
+      const h = await tauriInvoke<ItemRow[]>("get_history", { limit: 100 });
       setHistory(h);
       const cfg = await tauriInvoke<AppConfig>("get_settings");
       setSettings(cfg);
+
+      // Lazily pre-load thumbnails for visible images
+      h.forEach(async (item) => {
+        if (item.kind === "image" && item.file_path && !thumbnails[item.id]) {
+          try {
+            const b64 = await tauriInvoke<string>("read_image_base64", { path: item.file_path });
+            setThumbnails((prev) => ({ ...prev, [item.id]: b64 }));
+          } catch (_) {
+            // Ignore if image file is not on local disk
+          }
+        }
+      });
     } catch (e) {
       console.error("Error loading data:", e);
     }
@@ -141,6 +188,18 @@ export function App() {
     loadData();
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Keyboard shortcut to close lightbox
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPreviewImage(null);
+        setQrModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   const openQrModal = async () => {
@@ -180,6 +239,53 @@ export function App() {
     }
   };
 
+  const handleSendPendingFile = async () => {
+    if (!pendingFile) return;
+    try {
+      await tauriInvoke("send_file_to_phone", { input: { file_path: pendingFile.path } });
+      showToast(`Sent ${pendingFile.name} to phone`);
+      setPendingFile(null);
+      loadData();
+    } catch (e) {
+      showToast(`Send failed: ${e}`);
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      const filePath = (file as unknown as { path?: string }).path;
+      if (filePath) {
+        setPendingFile({
+          path: filePath,
+          name: file.name,
+          size: file.size,
+        });
+      } else {
+        showToast("Direct path not accessible from browser file picker");
+      }
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      const filePath = (file as unknown as { path?: string }).path;
+      if (filePath) {
+        setPendingFile({
+          path: filePath,
+          name: file.name,
+          size: file.size,
+        });
+      } else {
+        showToast("Dropped file path not accessible");
+      }
+    }
+  };
+
   const handleRevoke = async (id: string) => {
     if (!confirm("Revoke this paired phone?")) return;
     try {
@@ -201,12 +307,43 @@ export function App() {
     }
   };
 
-  const handleOpenFolder = async (path?: string) => {
+  const handleOpenFile = async (path: string) => {
     try {
-      await tauriInvoke("open_folder", { path: path || settings?.save_folder });
-      showToast("Opened in Explorer");
+      await tauriInvoke("open_file", { path });
+      showToast("Opened file in default app");
     } catch (e) {
-      showToast(`Open folder failed: ${e}`);
+      showToast(`Open file failed: ${e}`);
+    }
+  };
+
+  const handleRevealInFolder = async (path: string) => {
+    try {
+      await tauriInvoke("reveal_in_folder", { path });
+      showToast("Revealed in Explorer");
+    } catch (e) {
+      showToast(`Reveal failed: ${e}`);
+    }
+  };
+
+  const handleViewImage = async (item: ItemRow) => {
+    if (!item.file_path) return;
+    try {
+      let b64 = thumbnails[item.id];
+      if (!b64) {
+        b64 = await tauriInvoke<string>("read_image_base64", { path: item.file_path });
+        setThumbnails((prev) => ({ ...prev, [item.id]: b64 }));
+      }
+      setPreviewImage({
+        id: item.id,
+        url: b64,
+        fileName: item.file_name || "Photo",
+        filePath: item.file_path,
+        size: item.size,
+        date: item.created_at,
+      });
+      setZoomLevel(1);
+    } catch (e) {
+      showToast(`Could not load image: ${e}`);
     }
   };
 
@@ -250,10 +387,36 @@ export function App() {
     }
   };
 
+  // Filter history
+  const filteredHistory = history.filter((item) => {
+    if (filterType !== "all" && item.kind !== filterType) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchText = item.text?.toLowerCase().includes(q);
+      const matchFile = item.file_name?.toLowerCase().includes(q);
+      const matchPath = item.file_path?.toLowerCase().includes(q);
+      return Boolean(matchText || matchFile || matchPath);
+    }
+    return true;
+  });
+
+  const imageCount = history.filter((i) => i.kind === "image").length;
+  const fileCount = history.filter((i) => i.kind === "file" || i.kind === "video").length;
+  const textCount = history.filter((i) => i.kind === "text").length;
+  const linkCount = history.filter((i) => i.kind === "link").length;
+
   return (
     <div className="app-container">
       {/* Toast */}
       {message && <div className="toast">{message}</div>}
+
+      {/* Hidden File Input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: "none" }}
+        onChange={handleFileInputChange}
+      />
 
       {/* Header */}
       <header className="header">
@@ -261,7 +424,7 @@ export function App() {
           <div className="brand-logo">CS</div>
           <div>
             <h1 className="brand-title">ClipSync</h1>
-            <p className="brand-subtitle">Seamless Local Clipboard Sync</p>
+            <p className="brand-subtitle">Seamless Local Clipboard & File Sync</p>
           </div>
         </div>
         <div className="status-badge">
@@ -289,6 +452,7 @@ export function App() {
         {activeTab === "home" && (
           <div className="tab-pane home-pane">
             <div className="card-grid">
+              {/* Server Status Card */}
               <div className="card">
                 <h3>Server Status</h3>
                 <div className="metric">
@@ -313,47 +477,173 @@ export function App() {
                 </div>
               </div>
 
+              {/* Push to Phone Card */}
               <div className="card">
-                <h3>Push Text to Phone</h3>
-                <p className="subtext">Send quick snippets or links to your connected phone.</p>
+                <h3>Push to Phone</h3>
+                <p className="subtext">Send quick snippets, links, or files to your phone.</p>
                 <textarea
                   className="input-textarea"
-                  rows={3}
+                  rows={2}
                   placeholder="Paste or type text to send..."
                   value={quickSendText}
                   onChange={(e) => setQuickSendText(e.target.value)}
                 />
-                <button className="primary-btn" onClick={handleSendText}>
-                  Send to Phone
-                </button>
+                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                  <button className="primary-btn" style={{ flex: 1, marginTop: 0 }} onClick={handleSendText}>
+                    Send Text
+                  </button>
+                  <button
+                    className="btn-sm"
+                    style={{ whiteSpace: "nowrap" }}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    + Pick File
+                  </button>
+                </div>
+
+                {/* Drag & Drop Zone */}
+                <div
+                  className={`dropzone ${isDragging ? "active" : ""}`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <span className="dropzone-icon">📁</span>
+                  <span className="dropzone-text">Drop photos or files to send to phone</span>
+                  <span className="dropzone-hint">Or click to browse from PC</span>
+                </div>
+
+                {/* Pending file confirmation */}
+                {pendingFile && (
+                  <div style={{ marginTop: "10px", padding: "8px", background: "rgba(59,130,246,0.12)", borderRadius: "6px", border: "1px solid rgba(59,130,246,0.3)" }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Ready to send: {pendingFile.name}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{(pendingFile.size / 1024).toFixed(1)} KB</div>
+                    <div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+                      <button className="primary-btn" style={{ flex: 1, padding: "0.4rem", marginTop: 0 }} onClick={handleSendPendingFile}>
+                        Confirm Send
+                      </button>
+                      <button className="btn-sm" onClick={() => setPendingFile(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
+            {/* RECENT TRANSFERS CARD */}
             <div className="card mt-4">
               <div className="card-header-flex">
-                <h3>Recent Transfers</h3>
+                <div>
+                  <h3>Recent Transfers</h3>
+                  <p className="subtext">Persistent history from local SQLite database</p>
+                </div>
                 <button className="link-btn" onClick={() => setActiveTab("history")}>
-                  View all &rarr;
+                  View all ({history.length}) &rarr;
                 </button>
               </div>
+
               {history.length === 0 ? (
                 <div className="empty-state-rich">
                   <div className="empty-icon">📲</div>
                   <h4>No transfers yet</h4>
-                  <p>Share photos, links, or text from your paired Android phone or use &quot;Push Text to Phone&quot; above to see items here in real time.</p>
+                  <p>Share photos, links, or files from your paired Android phone or use &quot;Push to Phone&quot; to transfer items here.</p>
                   <button className="primary-btn pair-btn mt-2" onClick={openQrModal}>
                     + Pair New Phone
                   </button>
                 </div>
               ) : (
                 <ul className="item-list">
-                  {history.slice(0, 4).map((item) => (
-                    <li key={item.id} className="item-row">
-                      <span className={`kind-tag kind-${item.kind}`}>{item.kind}</span>
-                      <span className="item-content">{item.text || item.file_name || "Attachment"}</span>
-                      <button className="btn-sm" onClick={() => handleCopyHistory(item.id)}>Copy</button>
-                    </li>
-                  ))}
+                  {history.slice(0, 5).map((item) => {
+                    const isImage = item.kind === "image";
+                    const isLink = item.kind === "link";
+                    const isFile = item.kind === "file" || item.kind === "video";
+                    const thumb = thumbnails[item.id];
+
+                    return (
+                      <li key={item.id} className="rich-item-row">
+                        {/* Thumbnail / Icon */}
+                        {isImage ? (
+                          <div
+                            className="item-thumb-wrapper"
+                            title="Click to view photo"
+                            onClick={() => handleViewImage(item)}
+                          >
+                            {thumb ? (
+                              <img src={thumb} alt={item.file_name} className="item-thumb-img" />
+                            ) : (
+                              <span className="item-thumb-icon">🖼️</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="item-thumb-wrapper" style={{ cursor: "default" }}>
+                            <span className="item-thumb-icon">
+                              {isLink ? "🔗" : isFile ? "📄" : "📝"}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Main info */}
+                        <div className="rich-item-main">
+                          <div className="rich-item-header">
+                            <span className={`kind-tag kind-${item.kind}`}>{item.kind}</span>
+                            <span className={`badge-dir ${item.direction === "in" ? "badge-dir-in" : "badge-dir-out"}`}>
+                              {item.direction === "in" ? "← Phone" : "→ PC"}
+                            </span>
+                            <span className="rich-item-sub">
+                              {formatRelativeTime(item.created_at)}
+                            </span>
+                          </div>
+                          <div className="rich-item-title">
+                            {item.text || item.file_name || "Attachment"}
+                          </div>
+                          {item.size && (
+                            <div className="rich-item-sub">
+                              {(item.size / 1024).toFixed(1)} KB
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="item-actions">
+                          {isImage && (
+                            <button className="btn-sm" onClick={() => handleViewImage(item)}>
+                              View 🖼️
+                            </button>
+                          )}
+                          {isFile && item.file_path && (
+                            <button className="btn-sm" onClick={() => handleOpenFile(item.file_path!)}>
+                              Open 📄
+                            </button>
+                          )}
+                          {isLink && item.text && (
+                            <button
+                              className="btn-sm"
+                              onClick={() => {
+                                handleOpenFile(item.text!);
+                              }}
+                            >
+                              Open 🔗
+                            </button>
+                          )}
+                          <button className="btn-sm" onClick={() => handleCopyHistory(item.id)}>
+                            Copy
+                          </button>
+                          {item.file_path && (
+                            <button
+                              className="btn-sm"
+                              title="Show in Explorer"
+                              onClick={() => handleRevealInFolder(item.file_path!)}
+                            >
+                              📁
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -365,50 +655,163 @@ export function App() {
           <div className="tab-pane">
             <div className="card">
               <div className="card-header-flex">
-                <h3>Transfer History</h3>
+                <div>
+                  <h3>Transfer History ({history.length})</h3>
+                  <p className="subtext">Browse, search, inspect photos, and launch files</p>
+                </div>
                 {history.length > 0 && (
                   <button className="btn-danger-sm" onClick={handleClearHistory}>
                     Clear History
                   </button>
                 )}
               </div>
-              {history.length === 0 ? (
+
+              {/* Filter and Search Toolbar */}
+              <div className="filter-search-bar">
+                <div className="search-input-wrapper">
+                  <input
+                    type="text"
+                    className="search-input"
+                    placeholder="Search by text, filename, or path..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button className="search-clear-btn" onClick={() => setSearchQuery("")}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="filter-pills">
+                  <button
+                    className={`filter-pill ${filterType === "all" ? "active" : ""}`}
+                    onClick={() => setFilterType("all")}
+                  >
+                    All ({history.length})
+                  </button>
+                  <button
+                    className={`filter-pill ${filterType === "image" ? "active" : ""}`}
+                    onClick={() => setFilterType("image")}
+                  >
+                    Photos 🖼️ ({imageCount})
+                  </button>
+                  <button
+                    className={`filter-pill ${filterType === "file" ? "active" : ""}`}
+                    onClick={() => setFilterType("file")}
+                  >
+                    Files 📁 ({fileCount})
+                  </button>
+                  <button
+                    className={`filter-pill ${filterType === "text" ? "active" : ""}`}
+                    onClick={() => setFilterType("text")}
+                  >
+                    Text 📝 ({textCount})
+                  </button>
+                  <button
+                    className={`filter-pill ${filterType === "link" ? "active" : ""}`}
+                    onClick={() => setFilterType("link")}
+                  >
+                    Links 🔗 ({linkCount})
+                  </button>
+                </div>
+              </div>
+
+              {filteredHistory.length === 0 ? (
                 <div className="empty-state-rich">
                   <div className="empty-icon">📋</div>
-                  <h4>Clipboard history is empty</h4>
-                  <p>Inbound transfers from your phone and outbound pushes from your PC will be safely preserved here in your local SQLite database.</p>
-                  <button className="btn-sm mt-2" onClick={() => setActiveTab("home")}>
-                    Go to Home &rarr;
-                  </button>
+                  <h4>No matching transfers</h4>
+                  <p>Try clearing your search query or switching to another filter tab.</p>
                 </div>
               ) : (
                 <ul className="item-list">
-                  {history.map((item) => (
-                    <li key={item.id} className="item-row">
-                      <div className="item-meta">
-                        <span className={`kind-tag kind-${item.kind}`}>{item.kind}</span>
-                        <span className="item-dir">{item.direction === "in" ? "← Inbound" : "→ Outbound"}</span>
-                        <span className="item-time">
-                          {new Date(item.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </div>
-                      <div className="item-body">
-                        {item.text && <p className="item-text">{item.text}</p>}
-                        {item.file_name && (
-                          <p className="item-file">
-                            📁 <strong>{item.file_name}</strong> {item.size ? `(${(item.size / 1024).toFixed(1)} KB)` : ""}
-                          </p>
+                  {filteredHistory.map((item) => {
+                    const isImage = item.kind === "image";
+                    const isLink = item.kind === "link";
+                    const isFile = item.kind === "file" || item.kind === "video";
+                    const thumb = thumbnails[item.id];
+
+                    return (
+                      <li key={item.id} className="rich-item-row">
+                        {/* Thumbnail */}
+                        {isImage ? (
+                          <div
+                            className="item-thumb-wrapper"
+                            title="Click to view full photo"
+                            onClick={() => handleViewImage(item)}
+                          >
+                            {thumb ? (
+                              <img src={thumb} alt={item.file_name} className="item-thumb-img" />
+                            ) : (
+                              <span className="item-thumb-icon">🖼️</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="item-thumb-wrapper" style={{ cursor: "default" }}>
+                            <span className="item-thumb-icon">
+                              {isLink ? "🔗" : isFile ? "📄" : "📝"}
+                            </span>
+                          </div>
                         )}
-                      </div>
-                      <div className="item-actions">
-                        <button className="btn-sm" onClick={() => handleCopyHistory(item.id)}>Copy</button>
-                        {item.file_path && (
-                          <button className="btn-sm" onClick={() => handleOpenFolder(item.file_path)}>Folder</button>
-                        )}
-                        <button className="btn-sm text-danger" onClick={() => handleDeleteHistory(item.id)}>Delete</button>
-                      </div>
-                    </li>
-                  ))}
+
+                        {/* Content */}
+                        <div className="rich-item-main">
+                          <div className="rich-item-header">
+                            <span className={`kind-tag kind-${item.kind}`}>{item.kind}</span>
+                            <span className={`badge-dir ${item.direction === "in" ? "badge-dir-in" : "badge-dir-out"}`}>
+                              {item.direction === "in" ? "← From Phone" : "→ To Phone"}
+                            </span>
+                            <span className="rich-item-sub">
+                              {formatRelativeTime(item.created_at)} •{" "}
+                              {new Date(item.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <div className="rich-item-title">
+                            {item.text || item.file_name || "Attachment"}
+                          </div>
+                          {item.size && (
+                            <div className="rich-item-sub">
+                              Size: {(item.size / 1024).toFixed(1)} KB {item.file_path && `• ${item.file_path}`}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="item-actions">
+                          {isImage && (
+                            <button className="btn-sm" onClick={() => handleViewImage(item)}>
+                              View 🖼️
+                            </button>
+                          )}
+                          {isFile && item.file_path && (
+                            <button className="btn-sm" onClick={() => handleOpenFile(item.file_path!)}>
+                              Open 📄
+                            </button>
+                          )}
+                          {isLink && item.text && (
+                            <button className="btn-sm" onClick={() => handleOpenFile(item.text!)}>
+                              Open 🔗
+                            </button>
+                          )}
+                          <button className="btn-sm" onClick={() => handleCopyHistory(item.id)}>
+                            Copy
+                          </button>
+                          {item.file_path && (
+                            <button
+                              className="btn-sm"
+                              title="Reveal in Explorer"
+                              onClick={() => handleRevealInFolder(item.file_path!)}
+                            >
+                              📁
+                            </button>
+                          )}
+                          <button className="btn-sm text-danger" onClick={() => handleDeleteHistory(item.id)}>
+                            Delete
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -500,63 +903,8 @@ export function App() {
                 />
               </div>
 
-              <div className="toggle-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.copy_text_links}
-                    onChange={(e) => setSettings({ ...settings, copy_text_links: e.target.checked })}
-                  />
-                  <span>Copy received text and links to clipboard</span>
-                </label>
-              </div>
-
-              <div className="toggle-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.copy_images}
-                    onChange={(e) => setSettings({ ...settings, copy_images: e.target.checked })}
-                  />
-                  <span>Copy received images to clipboard</span>
-                </label>
-              </div>
-
-              <div className="toggle-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.copy_videos_as_files}
-                    onChange={(e) => setSettings({ ...settings, copy_videos_as_files: e.target.checked })}
-                  />
-                  <span>Copy received videos as files</span>
-                </label>
-              </div>
-
-              <div className="toggle-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.notifications_on_receive}
-                    onChange={(e) => setSettings({ ...settings, notifications_on_receive: e.target.checked })}
-                  />
-                  <span>Show toast notifications on receive</span>
-                </label>
-              </div>
-
-              <div className="toggle-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.auto_send_clipboard}
-                    onChange={(e) => setSettings({ ...settings, auto_send_clipboard: e.target.checked })}
-                  />
-                  <span>Auto-send PC clipboard text to phone (hotkey recommended instead)</span>
-                </label>
-              </div>
-
               <div className="setting-group">
-                <label>Send Hotkey</label>
+                <label>Global Send Hotkey</label>
                 <input
                   type="text"
                   className="input-text"
@@ -569,34 +917,36 @@ export function App() {
                 <label>
                   <input
                     type="checkbox"
-                    checked={settings.start_with_windows}
-                    onChange={(e) => setSettings({ ...settings, start_with_windows: e.target.checked })}
+                    checked={settings.notifications_on_receive}
+                    onChange={(e) => setSettings({ ...settings, notifications_on_receive: e.target.checked })}
                   />
-                  <span>Start with Windows (launch to tray)</span>
+                  Show notification on receiving items
                 </label>
               </div>
 
-              <div className="setting-group">
-                <label>History Retention (Days)</label>
-                <input
-                  type="number"
-                  className="input-text"
-                  value={settings.retention_days}
-                  onChange={(e) => setSettings({ ...settings, retention_days: Number(e.target.value) })}
-                />
+              <div className="toggle-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.auto_send_clipboard}
+                    onChange={(e) => setSettings({ ...settings, auto_send_clipboard: e.target.checked })}
+                  />
+                  Auto-send clipboard when copied on PC
+                </label>
               </div>
 
-              <div className="setting-group">
-                <label>History Max Items</label>
-                <input
-                  type="number"
-                  className="input-text"
-                  value={settings.retention_max_items}
-                  onChange={(e) => setSettings({ ...settings, retention_max_items: Number(e.target.value) })}
-                />
+              <div className="toggle-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.start_with_windows}
+                    onChange={(e) => setSettings({ ...settings, start_with_windows: e.target.checked })}
+                  />
+                  Start ClipSync with Windows
+                </label>
               </div>
 
-              <button className="primary-btn mt-4" onClick={handleSaveSettings}>
+              <button className="primary-btn" onClick={handleSaveSettings}>
                 Save Settings
               </button>
             </div>
@@ -607,60 +957,127 @@ export function App() {
         {activeTab === "help" && (
           <div className="tab-pane">
             <div className="card">
-              <h3>Help & Troubleshooting</h3>
-              <div className="help-section">
-                <h4>1. Windows Firewall</h4>
-                <p>
-                  Ensure ClipSync is permitted through Windows Firewall. If pairing or transfers fail, verify that inbound connections are allowed for ClipSync on Private networks.
-                </p>
-                <div className="code-hint mt-2">
-                  <span>To add the firewall rule manually via Administrator Command Prompt:</span>
-                  <pre className="code-block">
-                    netsh advfirewall firewall add rule name=&quot;ClipSync&quot; dir=in action=allow protocol=TCP localport=47821
-                  </pre>
-                </div>
+              <h3>Help & Keyboard Shortcuts</h3>
+              <div className="help-section mt-2">
+                <h4>🚀 Fast Hotkey Transfer</h4>
+                <p>Press <kbd>Ctrl+Shift+S</kbd> anywhere in Windows to instantly push your current clipboard text or copied file to your paired phone.</p>
               </div>
               <div className="help-section">
-                <h4>2. Wi-Fi AP Isolation</h4>
-                <p>
-                  Some routers enable &quot;AP Isolation&quot; or Guest network restrictions, preventing devices on the same Wi-Fi network from talking to each other. Connect both devices to the standard main Wi-Fi network.
-                </p>
+                <h4>🖼️ Viewing Photos & Files</h4>
+                <p>Click any photo thumbnail in Recent Transfers or History to open the high-res Lightbox viewer. Use &quot;Open 📄&quot; to launch PDFs and files directly with your default Windows application.</p>
               </div>
               <div className="help-section">
-                <h4>3. Discovery & Manual IP</h4>
-                <p>
-                  If mDNS automatic discovery fails, enter your PC&apos;s local IP address and port manually in the Android mobile app.
-                </p>
+                <h4>📲 Android Share Sheet</h4>
+                <p>In any Android app (Chrome, Photos, WhatsApp), tap Share and choose <strong>&quot;Send to PC&quot;</strong> to push files up to 50 MB directly into your PC&apos;s Downloads\ClipSync folder.</p>
               </div>
               <div className="help-section">
-                <h4>4. Security & TLS</h4>
-                <p>
-                  All traffic is end-to-end encrypted with a local self-signed TLS certificate and SHA-256 certificate pinning established during QR pairing. No cloud or external connection is ever required.
-                </p>
+                <h4>🔒 End-to-End Local Security</h4>
+                <p>All transfers use TLS 1.3 with an ECDSA P-256 certificate pinned to your phone during QR pairing. No telemetry, cloud relay, or third-party servers.</p>
               </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* QR Pairing Modal */}
-      {qrModalOpen && (
+      {/* QR PAIRING MODAL */}
+      {qrModalOpen && qrData && (
         <div className="modal-backdrop" onClick={() => setQrModalOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Pair Phone with ClipSync</h3>
-            <p className="subtext">Scan this QR code in the ClipSync Android app to pair securely.</p>
-            <div className="qr-box" dangerouslySetInnerHTML={{ __html: qrData?.svg || "" }} />
-            <div className="countdown">
-              Token expires in: <strong>{Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, "0")}</strong>
-            </div>
-            <button className="primary-btn mt-4" onClick={() => setQrModalOpen(false)}>
-              Close
+            <h3>Pair New Phone</h3>
+            <p className="subtext">Scan this QR code with the ClipSync app on your phone</p>
+            <div className="qr-box" dangerouslySetInnerHTML={{ __html: qrData.svg }} />
+            <div className="countdown">Expires in {countdown}s</div>
+            <button className="primary-btn mt-2" onClick={() => setQrModalOpen(false)}>
+              Done
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* PHOTO LIGHTBOX MODAL */}
+      {previewImage && (
+        <div className="lightbox-backdrop" onClick={() => setPreviewImage(null)}>
+          {/* Header */}
+          <div className="lightbox-header" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <div className="lightbox-title">{previewImage.fileName}</div>
+              <div className="lightbox-meta">
+                {previewImage.size ? `${(previewImage.size / 1024).toFixed(1)} KB • ` : ""}
+                {previewImage.date ? new Date(previewImage.date * 1000).toLocaleString() : ""}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <div className="zoom-controls">
+                <button
+                  className="btn-sm"
+                  title="Zoom Out"
+                  onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.25))}
+                >
+                  -
+                </button>
+                <span style={{ fontSize: "0.8rem", minWidth: "45px", textAlign: "center" }}>
+                  {Math.round(zoomLevel * 100)}%
+                </span>
+                <button
+                  className="btn-sm"
+                  title="Zoom In"
+                  onClick={() => setZoomLevel((z) => Math.min(3, z + 0.25))}
+                >
+                  +
+                </button>
+                <button className="btn-sm" title="Reset Zoom" onClick={() => setZoomLevel(1)}>
+                  Reset
+                </button>
+              </div>
+              <button
+                className="btn-sm"
+                style={{ fontSize: "1.1rem", padding: "0.2rem 0.6rem" }}
+                onClick={() => setPreviewImage(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="lightbox-body" onClick={() => setPreviewImage(null)}>
+            <img
+              src={previewImage.url}
+              alt={previewImage.fileName}
+              className="lightbox-img"
+              style={{ transform: `scale(${zoomLevel})` }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          {/* Footer Toolbar */}
+          <div className="lightbox-footer" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "50%" }}>
+              {previewImage.filePath}
+            </div>
+            <div className="lightbox-actions">
+              <button
+                className="btn-sm"
+                onClick={() => handleOpenFile(previewImage.filePath)}
+              >
+                Open in Photos 🖼️
+              </button>
+              <button
+                className="btn-sm"
+                onClick={() => handleRevealInFolder(previewImage.filePath)}
+              >
+                Show in Folder 📁
+              </button>
+              <button
+                className="btn-sm"
+                onClick={() => handleCopyHistory(previewImage.id)}
+              >
+                Copy Image 📋
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
-
-export default App;

@@ -181,6 +181,7 @@ class EventsService {
       label: fileName,
       size: size ?? 0,
       status: savedPath != null ? 'done' : 'failed',
+      filePath: savedPath,
     );
 
     return savedPath;
@@ -244,6 +245,7 @@ class EventsService {
     required String label,
     required int size,
     required String status,
+    String? filePath,
   }) async {
     if (database == null) return;
     try {
@@ -253,6 +255,7 @@ class EventsService {
               direction: direction,
               kind: kind,
               label: label,
+              filePath: Value(filePath),
               size: size,
               status: status,
               createdAt: DateTime.now().millisecondsSinceEpoch,

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:drift/drift.dart' show Value, InsertMode;
 import 'package:uuid/uuid.dart';
 
 import '../core/api_client.dart';
 import '../core/models.dart';
+import '../data/db.dart';
 import '../data/secure_store.dart';
 
 class TransferService {
@@ -14,6 +16,7 @@ class TransferService {
 
   final SecureStore secureStore;
   final ApiClient? customClient;
+  final AppDatabase? database;
   final List<TransferItem> _queue = [];
   bool _isProcessing = false;
 
@@ -23,7 +26,7 @@ class TransferService {
   Stream<List<TransferItem>> get queueStream => _queueController.stream;
   List<TransferItem> get queue => List.unmodifiable(_queue);
 
-  TransferService({required this.secureStore, this.customClient});
+  TransferService({required this.secureStore, this.customClient, this.database});
 
   /// Enqueues text to send to PC.
   /// Validates <= 1 MB limit per SPEC before enqueueing.
@@ -120,6 +123,23 @@ class TransferService {
       });
 
       _updateStatus(item.id, 'done', progress: 1.0);
+      if (database != null) {
+        try {
+          await database!.into(database!.transfers).insert(
+                TransfersCompanion.insert(
+                  id: item.id,
+                  direction: 'out',
+                  kind: item.kind,
+                  label: item.label,
+                  filePath: Value(item.filePath),
+                  size: item.size,
+                  status: 'done',
+                  createdAt: item.createdAt,
+                ),
+                mode: InsertMode.insertOrReplace,
+              );
+        } catch (_) {}
+      }
     } catch (e) {
       _updateStatus(item.id, 'failed', error: e.toString());
     } finally {
