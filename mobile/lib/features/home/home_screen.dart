@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -9,6 +10,8 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/models.dart';
 import '../../data/db.dart';
 import '../../data/secure_store.dart';
+import '../../services/events_service.dart';
+import '../../services/notifications.dart';
 import '../../services/transfer_service.dart';
 import '../history/history_screen.dart';
 import '../media/photo_viewer_screen.dart';
@@ -21,12 +24,14 @@ class HomeScreen extends StatefulWidget {
   final SecureStore? secureStore;
   final TransferService? transferService;
   final AppDatabase? database;
+  final EventsService? eventsService;
 
   const HomeScreen({
     super.key,
     this.secureStore,
     this.transferService,
     this.database,
+    this.eventsService,
   });
 
   @override
@@ -37,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final SecureStore _secureStore;
   late final TransferService _transferService;
   late final AppDatabase _db;
+  late final EventsService _eventsService;
   StreamSubscription<List<Transfer>>? _dbSubscription;
   StreamSubscription<List<TransferItem>>? _queueSubscription;
 
@@ -53,7 +59,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _db = widget.database ?? AppDatabase();
     _transferService = widget.transferService ??
         TransferService(secureStore: _secureStore, database: _db);
+    _eventsService = widget.eventsService ??
+        EventsService(secureStore: _secureStore, database: _db);
 
+    _initNotificationsAndEvents();
     _loadPcInfo();
 
     _queueSubscription = _transferService.queueStream.listen((items) {
@@ -77,6 +86,22 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _initNotificationsAndEvents() async {
+    try {
+      await NotificationsService.initialize(
+        onNotificationTapped: (response) {
+          if (response.actionId != null && response.payload != null) {
+            _eventsService.handleNotificationAction(
+              actionId: response.actionId!,
+              payload: response.payload!,
+            );
+          }
+        },
+      );
+    } catch (_) {}
+    await _eventsService.start();
+  }
+
   void _loadPcInfo() async {
     final isDev = await _secureStore.isDevMode();
     final name = await _secureStore.getPcName();
@@ -91,6 +116,12 @@ class _HomeScreenState extends State<HomeScreen> {
           _connectionStatus = 'Offline';
         }
       });
+    }
+    if (!isDev && host != null) {
+      _eventsService.stop();
+      await _eventsService.start();
+    } else if (host == null) {
+      _eventsService.stop();
     }
   }
 
@@ -131,6 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _eventsService.stop();
     _queueSubscription?.cancel();
     _dbSubscription?.cancel();
     _textController.dispose();
@@ -357,22 +389,23 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('ClipSync'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.developer_mode),
-            tooltip: 'Dev Connection (M2)',
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => DevScreen(
-                    secureStore: _secureStore,
-                    transferService: _transferService,
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.developer_mode),
+              tooltip: 'Dev Connection (M2)',
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DevScreen(
+                      secureStore: _secureStore,
+                      transferService: _transferService,
+                    ),
                   ),
-                ),
-              );
-              _loadPcInfo();
-            },
-          ),
+                );
+                _loadPcInfo();
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Transfer History',

@@ -94,6 +94,17 @@ class EventsService {
       // Flag with loop prevention so phone never echoes this content back to PC
       LoopPrevention.markIncoming(content);
 
+      // Record in SQLite history immediately so Recent Transfers shows it
+      await insertHistoryItem(
+        direction: 'in',
+        kind: (content.startsWith('http://') || content.startsWith('https://'))
+            ? 'link'
+            : 'text',
+        label: content,
+        size: content.length,
+        status: 'done',
+      );
+
       // Dispatch notification with Copy action
       await NotificationsService.showTextReceived(
         id: id,
@@ -114,6 +125,11 @@ class EventsService {
         fileId: fileId,
         size: size,
       );
+
+      // Auto-download offered file so it appears in Recent Transfers
+      if (fileId.isNotEmpty) {
+        unawaited(handleDownloadAction(fileId: fileId, fileName: fileName, size: size));
+      }
     }
   }
 
