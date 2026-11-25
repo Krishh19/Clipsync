@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import logoSvg from "./assets/logo.svg";
 import "./App.css";
 
@@ -151,7 +151,48 @@ export default function App() {
   // Drag and Drop & File Upload states
   const [isDragging, setIsDragging] = useState(false);
   const [pendingFile, setPendingFile] = useState<{ path: string; name: string; size: number } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const isTauri =
+      typeof window !== "undefined" &&
+      Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+    if (isTauri) {
+      import("@tauri-apps/api/webview")
+        .then(({ getCurrentWebview }) =>
+          getCurrentWebview().onDragDropEvent(async (event) => {
+            if (event.payload.type === "enter" || event.payload.type === "over") {
+              setIsDragging(true);
+            } else if (event.payload.type === "leave") {
+              setIsDragging(false);
+            } else if (event.payload.type === "drop") {
+              setIsDragging(false);
+              const paths = event.payload.paths;
+              if (paths && paths.length > 0) {
+                try {
+                  const info = await tauriInvoke<{ path: string; name: string; size: number }>(
+                    "get_file_info",
+                    { path: paths[0] }
+                  );
+                  setPendingFile(info);
+                } catch (e) {
+                  showToast(`Could not read dropped file: ${e}`);
+                }
+              }
+            }
+          })
+        )
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   const showToast = (msg: string) => {
     setMessage(msg);
@@ -231,8 +272,12 @@ export default function App() {
   const handleSendText = async () => {
     if (!quickSendText.trim()) return;
     try {
-      await tauriInvoke("send_text_to_phone", { text: quickSendText });
-      showToast("Text sent to phone");
+      const delivered = await tauriInvoke<number>("send_text_to_phone", { text: quickSendText });
+      if (delivered > 0) {
+        showToast(`Sent to ${delivered} phone${delivered > 1 ? "s" : ""}`);
+      } else {
+        showToast("Saved to history (0 phones connected — pair/open app on phone)");
+      }
       setQuickSendText("");
       loadData();
     } catch (e) {
@@ -243,8 +288,12 @@ export default function App() {
   const handleSendPendingFile = async () => {
     if (!pendingFile) return;
     try {
-      await tauriInvoke("send_file_to_phone", { input: { file_path: pendingFile.path } });
-      showToast(`Sent ${pendingFile.name} to phone`);
+      const delivered = await tauriInvoke<number>("send_file_to_phone", { input: { file_path: pendingFile.path } });
+      if (delivered > 0) {
+        showToast(`Sent ${pendingFile.name} to ${delivered} phone${delivered > 1 ? "s" : ""}`);
+      } else {
+        showToast(`Queued ${pendingFile.name} (0 phones connected — pair/open app on phone)`);
+      }
       setPendingFile(null);
       loadData();
     } catch (e) {
@@ -252,38 +301,14 @@ export default function App() {
     }
   };
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      const filePath = (file as unknown as { path?: string }).path;
-      if (filePath) {
-        setPendingFile({
-          path: filePath,
-          name: file.name,
-          size: file.size,
-        });
-      } else {
-        showToast("Direct path not accessible from browser file picker");
+  const handlePickFile = async () => {
+    try {
+      const picked = await tauriInvoke<{ path: string; name: string; size: number } | null>("pick_file");
+      if (picked) {
+        setPendingFile(picked);
       }
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      const filePath = (file as unknown as { path?: string }).path;
-      if (filePath) {
-        setPendingFile({
-          path: filePath,
-          name: file.name,
-          size: file.size,
-        });
-      } else {
-        showToast("Dropped file path not accessible");
-      }
+    } catch (e) {
+      showToast(`File picker failed: ${e}`);
     }
   };
 
@@ -411,14 +436,6 @@ export default function App() {
       {/* Toast */}
       {message && <div className="toast">{message}</div>}
 
-      {/* Hidden File Input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        style={{ display: "none" }}
-        onChange={handleFileInputChange}
-      />
-
       {/* Header */}
       <header className="header">
         <div className="brand">
@@ -496,7 +513,7 @@ export default function App() {
                   <button
                     className="btn-sm"
                     style={{ whiteSpace: "nowrap" }}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={handlePickFile}
                   >
                     + Pick File
                   </button>
@@ -510,8 +527,7 @@ export default function App() {
                     setIsDragging(true);
                   }}
                   onDragLeave={() => setIsDragging(false)}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={handlePickFile}
                 >
                   <span className="dropzone-icon">📁</span>
                   <span className="dropzone-text">Drop photos or files to send to phone</span>

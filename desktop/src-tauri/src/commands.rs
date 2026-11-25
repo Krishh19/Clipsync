@@ -268,12 +268,58 @@ pub async fn read_image_base64(path: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
+#[derive(Serialize)]
+pub struct PickedFileInfo {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+}
+
 #[tauri::command]
-pub async fn send_text_to_phone(state: State<'_, Arc<AppState>>, text: String) -> Result<(), String> {
+pub async fn pick_file() -> Result<Option<PickedFileInfo>, String> {
+    let file = rfd::AsyncFileDialog::new().pick_file().await;
+    match file {
+        Some(handle) => {
+            let path = handle.path().to_path_buf();
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file")
+                .to_string();
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            Ok(Some(PickedFileInfo {
+                path: path.to_string_lossy().to_string(),
+                name,
+                size,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn get_file_info(path: String) -> Result<PickedFileInfo, String> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() || !p.is_file() {
+        return Err("File not found".to_string());
+    }
+    let name = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let size = std::fs::metadata(&p).map_err(|e| e.to_string())?.len();
+    Ok(PickedFileInfo { path, name, size })
+}
+
+#[tauri::command]
+pub async fn send_text_to_phone(state: State<'_, Arc<AppState>>, text: String) -> Result<usize, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+
+    let connected_count = state.ws_clients.read().await.len();
 
     let id = Uuid::new_v4().to_string();
     let msg = WsServerMessage::Text {
@@ -299,7 +345,7 @@ pub async fn send_text_to_phone(state: State<'_, Arc<AppState>>, text: String) -
     };
     let _ = state.database.insert_item(&item);
 
-    Ok(())
+    Ok(connected_count)
 }
 
 #[derive(Deserialize)]
@@ -311,11 +357,13 @@ pub struct SendFileInput {
 pub async fn send_file_to_phone(
     state: State<'_, Arc<AppState>>,
     input: SendFileInput,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let path = std::path::PathBuf::from(&input.file_path);
     if !path.exists() {
         return Err("File does not exist".to_string());
     }
+
+    let connected_count = state.ws_clients.read().await.len();
 
     let file_id = Uuid::new_v4().to_string();
     let file_name = path
@@ -327,11 +375,26 @@ pub async fn send_file_to_phone(
     let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     let size = metadata.len();
 
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let (kind, mime) = match ext.as_str() {
+        "png" => ("image", "image/png"),
+        "jpg" | "jpeg" => ("image", "image/jpeg"),
+        "gif" => ("image", "image/gif"),
+        "webp" => ("image", "image/webp"),
+        "bmp" => ("image", "image/bmp"),
+        "mp4" | "mov" | "mkv" => ("video", "video/mp4"),
+        _ => ("file", "application/octet-stream"),
+    };
+
     let offer = FileOffer {
         id: file_id.clone(),
         name: file_name.clone(),
         file_path: path.clone(),
-        mime: "application/octet-stream".to_string(),
+        mime: mime.to_string(),
         size,
         created_at: std::time::Instant::now(),
     };
@@ -347,7 +410,7 @@ pub async fn send_file_to_phone(
         id: file_id.clone(),
         name: file_name.clone(),
         size,
-        mime: "application/octet-stream".to_string(),
+        mime: mime.to_string(),
         ts: now,
     };
 
@@ -356,18 +419,18 @@ pub async fn send_file_to_phone(
     let item = ItemRow {
         id: file_id,
         direction: "out".to_string(),
-        kind: "file".to_string(),
+        kind: kind.to_string(),
         device_id: None,
         text: None,
         file_path: Some(path.to_string_lossy().to_string()),
         file_name: Some(file_name),
-        mime: Some("application/octet-stream".to_string()),
+        mime: Some(mime.to_string()),
         size: Some(size as i64),
         created_at: now,
     };
     let _ = state.database.insert_item(&item);
 
-    Ok(())
+    Ok(connected_count)
 }
 
 #[tauri::command]

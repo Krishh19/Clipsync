@@ -96,6 +96,27 @@ class PairingService {
         if (statusCode == 429) {
           return const PairResult.failure('Too many pairing attempts. Please wait 1 minute.');
         }
+        final errStr = '${e.message ?? ''} ${e.error ?? ''}';
+        if (errStr.contains('No route to host') || errStr.contains('errno = 113')) {
+          return PairResult.failure(
+            'Cannot reach PC at ${payload.host}:${payload.port} (No route to host).\n'
+            '• Ensure Phone & PC are on the same Wi-Fi (no Guest Wi-Fi / AP isolation)\n'
+            '• Set Windows Wi-Fi to Private or allow ClipSync in Windows Firewall\n'
+            '• Disable any active VPN on phone or PC',
+          );
+        }
+        if (e.type == DioExceptionType.connectionTimeout || errStr.contains('timed out')) {
+          return PairResult.failure(
+            'Connection timed out to ${payload.host}:${payload.port}. '
+            'Check that Windows Firewall allows TCP port ${payload.port}.',
+          );
+        }
+        if (errStr.contains('Connection refused')) {
+          return PairResult.failure(
+            'Connection refused at ${payload.host}:${payload.port}. '
+            'Make sure ClipSync Desktop is running.',
+          );
+        }
       }
       return PairResult.failure(e.toString().replaceFirst('Exception: ', ''));
     }

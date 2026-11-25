@@ -221,6 +221,8 @@ pub fn run() {
             open_file,
             reveal_in_folder,
             read_image_base64,
+            pick_file,
+            get_file_info,
             send_text_to_phone,
             send_file_to_phone,
             copy_history_item,
