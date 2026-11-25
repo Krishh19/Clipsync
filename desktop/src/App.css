@@ -737,3 +737,44 @@ body {
   align-items: center;
   gap: 0.4rem;
 }
+
+.manual-pairing-box {
+  margin-top: 0.85rem;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+}
+.manual-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.manual-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  min-width: 60px;
+}
+.manual-val {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.25rem 0.45rem;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+}

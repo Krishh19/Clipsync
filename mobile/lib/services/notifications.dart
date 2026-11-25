@@ -25,6 +25,16 @@ class NotificationsService {
     );
   }
 
+  static Future<void> requestPermission() async {
+    try {
+      final android = _notificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+    } catch (_) {
+      // Ignore in test/headless environments
+    }
+  }
+
   static Future<void> showTextReceived({
     required int id,
     required String senderName,
@@ -80,11 +90,16 @@ class NotificationsService {
     );
 
     const details = NotificationDetails(android: androidDetails);
+    final sizeLabel = size != null && size > 0
+        ? (size >= 1024 * 1024
+            ? ' (${(size / (1024 * 1024)).toStringAsFixed(1)} MB)'
+            : ' (${(size / 1024).toStringAsFixed(1)} KB)')
+        : '';
     try {
       await _notificationsPlugin.show(
         id: id,
         title: 'From $senderName offered file',
-        body: fileName,
+        body: '$fileName$sizeLabel',
         notificationDetails: details,
         payload: payload,
       );

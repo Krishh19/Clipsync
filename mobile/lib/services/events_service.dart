@@ -34,6 +34,8 @@ class EventsService {
 
   EventsClient? _client;
   bool _isRunning = false;
+  bool _isWsConnected = false;
+  final StreamController<bool> _connectionController = StreamController<bool>.broadcast();
 
   EventsService({
     required this.secureStore,
@@ -45,6 +47,8 @@ class EventsService {
   });
 
   bool get isRunning => _isRunning;
+  bool get isWsConnected => _isWsConnected;
+  Stream<bool> get connectionStream => _connectionController.stream;
   EventsClient? get client => _client;
 
   Future<void> start() async {
@@ -78,6 +82,12 @@ class EventsService {
         secret: secret,
         onEvent: handleEvent,
         onError: (err) {},
+        onConnectionChanged: (connected) {
+          _isWsConnected = connected;
+          if (!_connectionController.isClosed) {
+            _connectionController.add(connected);
+          }
+        },
       );
     }
     _client?.connect();
@@ -283,6 +293,10 @@ class EventsService {
 
   void stop() {
     _isRunning = false;
+    _isWsConnected = false;
+    if (!_connectionController.isClosed) {
+      _connectionController.add(false);
+    }
     _client?.dispose();
     _client = null;
   }

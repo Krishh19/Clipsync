@@ -11,7 +11,9 @@ No cloud. No accounts. No subscriptions. No telemetry. Your clipboard and files 
 - **Instant Phone → PC Transfer**: Share links, photos, videos, or files up to 50 MB directly from the Android Share Sheet or the Quick Settings tile. Text lands straight on your PC's clipboard (ready for `Ctrl+V`), and files land in your `Downloads\ClipSync` folder.
 - **Instant PC → Phone Transfer**: Press `Ctrl+Shift+S` (or use the system tray menu) on Windows to push your PC clipboard text directly to your phone as an actionable notification with a **Copy** button.
 - **End-to-End Cryptographic Security**: Self-signed ECDSA P-256 TLS certificate with strict SHA-256 fingerprint pinning on Android. No untrusted root CAs, no man-in-the-middle risks.
-- **Zero-Config Pairing**: Scan a QR code on your PC screen with your phone's camera to securely pair in seconds.
+- **Zero-Config Pairing**: Scan a QR code on your PC screen with your phone's camera to securely pair in seconds, or expand **Manual Pairing Details** in the Desktop QR modal for one-click copy of Host IP, Port, Token, and SHA-256 Fingerprint.
+- **In-App Photo & Text Viewers**: Built-in Desktop Lightbox modal (with zoom, Open in Photos, Show in Folder) and Mobile full-screen pinch-to-zoom `PhotoViewerScreen` + `TextDetailSheet` inspector.
+- **Native Drag & Drop + Search History**: Drag files directly into the Desktop window or use `+ Pick File`, and filter transfer history across `All`, `Photos`, `Files`, `Text`, and `Links`.
 - **Automatic Discovery**: Zero-configuration mDNS (`_clipsync._tcp.local.`) automatically re-discovers your PC when IP addresses change after Wi-Fi reconnects.
 - **Privacy First**: Password manager entries (`ExcludeClipboardContentFromMonitorProcessing`) are automatically skipped. Strict two-way loopback suppression prevents clipboard reflection loops.
 
@@ -199,6 +201,12 @@ flutter test
 ```
 
 ---
+
+## 🤝 Community & Governance
+
+- [Security Policy](SECURITY.md) — Vulnerability reporting & local cryptographic architecture
+- [Contributing Guide](CONTRIBUTING.md) — Development setup & pull request workflow
+- [Code of Conduct](CODE_OF_CONDUCT.md) — Community standards (Contributor Covenant v2.1)
 
 ## 📄 License
 

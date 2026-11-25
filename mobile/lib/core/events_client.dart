@@ -20,6 +20,7 @@ class EventsClient {
   final String secret;
   final void Function(WsEvent event)? onEvent;
   final void Function(Object error)? onError;
+  final void Function(bool connected)? onConnectionChanged;
   final WebSocketChannelFactory? channelFactory;
 
   WebSocketChannel? _channel;
@@ -35,6 +36,7 @@ class EventsClient {
     required this.secret,
     this.onEvent,
     this.onError,
+    this.onConnectionChanged,
     this.channelFactory,
   });
 
@@ -70,18 +72,22 @@ class EventsClient {
         (data) {
           // Reset backoff on successful communication
           _backoffSeconds = 1;
+          onConnectionChanged?.call(true);
           _handleMessage(data);
         },
         onError: (err) {
+          onConnectionChanged?.call(false);
           onError?.call(err);
           _scheduleReconnect();
         },
         onDone: () {
+          onConnectionChanged?.call(false);
           _scheduleReconnect();
         },
         cancelOnError: true,
       );
     } catch (e) {
+      onConnectionChanged?.call(false);
       onError?.call(e);
       _scheduleReconnect();
     }

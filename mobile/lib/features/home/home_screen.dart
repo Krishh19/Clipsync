@@ -45,12 +45,14 @@ class _HomeScreenState extends State<HomeScreen> {
   late final EventsService _eventsService;
   StreamSubscription<List<Transfer>>? _dbSubscription;
   StreamSubscription<List<TransferItem>>? _queueSubscription;
+  StreamSubscription<bool>? _wsSubscription;
 
   final TextEditingController _textController = TextEditingController();
   List<TransferItem> _recentTransfers = [];
   List<Transfer> _persistedTransfers = [];
   String _connectionStatus = 'Offline';
   String _pcName = 'Not Paired';
+  bool _isWsLive = false;
 
   @override
   void initState() {
@@ -69,6 +71,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _recentTransfers = List.from(items);
+        });
+      }
+    });
+
+    _wsSubscription = _eventsService.connectionStream.listen((connected) {
+      if (mounted) {
+        setState(() {
+          _isWsLive = connected;
         });
       }
     });
@@ -98,6 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         },
       );
+      await NotificationsService.requestPermission();
     } catch (_) {}
     await _eventsService.start();
   }
@@ -163,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _eventsService.stop();
+    _wsSubscription?.cancel();
     _queueSubscription?.cancel();
     _dbSubscription?.cancel();
     _textController.dispose();
@@ -452,27 +464,91 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildConnectionChip() {
-    Color chipColor = Colors.grey;
-    if (_connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode') {
-      chipColor = Colors.green;
+    final isPaired = _connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode';
+    Color dotColor = Colors.grey;
+    String statusText = 'Not Paired — Tap to scan QR';
+    if (isPaired) {
+      if (_isWsLive) {
+        dotColor = Colors.green;
+        statusText = 'Live Sync Active';
+      } else {
+        dotColor = Colors.orange;
+        statusText = 'Paired (Connecting...)';
+      }
     }
-    if (_connectionStatus == 'Searching') chipColor = Colors.orange;
 
-    return Center(
-      child: ActionChip(
-        avatar: CircleAvatar(
-          backgroundColor: chipColor,
-          radius: 6,
-        ),
-        label: Text('$_pcName ($_connectionStatus)'),
-        tooltip: _connectionStatus == 'Connected' || _connectionStatus == 'Dev Mode'
-            ? 'Connected to $_pcName'
-            : 'Tap to pair with PC',
-        onPressed: () {
-          if (_connectionStatus != 'Connected' && _connectionStatus != 'Dev Mode') {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          if (!isPaired) {
             _openPairing();
+          } else if (!_isWsLive) {
+            _eventsService.stop();
+            _eventsService.start();
           }
         },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: dotColor.withValues(alpha: 0.5),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _pcName,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!isPaired)
+                FilledButton.tonalIcon(
+                  onPressed: _openPairing,
+                  icon: const Icon(Icons.qr_code_scanner, size: 18),
+                  label: const Text('Pair'),
+                )
+              else if (!_isWsLive)
+                IconButton(
+                  tooltip: 'Reconnect',
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    _eventsService.stop();
+                    _eventsService.start();
+                  },
+                )
+              else
+                const Icon(Icons.verified_user, color: Colors.green, size: 20),
+            ],
+          ),
+        ),
       ),
     );
   }

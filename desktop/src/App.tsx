@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import logoSvg from "./assets/logo.svg";
 import "./App.css";
 
@@ -135,9 +135,11 @@ export default function App() {
   const [settings, setSettings] = useState<AppConfig | null>(null);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrData, setQrData] = useState<QrData | null>(null);
+  const [showManualDetails, setShowManualDetails] = useState(false);
   const [countdown, setCountdown] = useState(300);
   const [quickSendText, setQuickSendText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const lastTopItemIdRef = useRef<string | null>(null);
 
   // Media Viewer & Thumbnail states
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
@@ -206,6 +208,13 @@ export default function App() {
       const d = await tauriInvoke<DeviceRow[]>("list_devices");
       setDevices(d);
       const h = await tauriInvoke<ItemRow[]>("get_history", { limit: 100 });
+      if (h.length > 0) {
+        if (lastTopItemIdRef.current !== null && h[0].id !== lastTopItemIdRef.current && h[0].direction === "in") {
+          const preview = h[0].file_name || (h[0].text ? h[0].text.slice(0, 40) : "item");
+          showToast(`Received ${h[0].kind} from phone: ${preview}`);
+        }
+        lastTopItemIdRef.current = h[0].id;
+      }
       setHistory(h);
       const cfg = await tauriInvoke<AppConfig>("get_settings");
       setSettings(cfg);
@@ -228,7 +237,7 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(loadData, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -248,10 +257,35 @@ export default function App() {
     try {
       const data = await tauriInvoke<QrData>("get_pair_qr");
       setQrData(data);
+      setShowManualDetails(false);
       setCountdown(data.expires_in_seconds);
       setQrModalOpen(true);
     } catch (e) {
       showToast("Failed to generate pairing QR");
+    }
+  };
+
+  const parseQrDetails = (url: string) => {
+    try {
+      const normalized = url.replace(/^clipsync:\/\//i, "https://");
+      const u = new URL(normalized);
+      return {
+        host: u.searchParams.get("host") || "",
+        port: u.searchParams.get("port") || "47821",
+        token: u.searchParams.get("token") || "",
+        fp: u.searchParams.get("fp") || "",
+      };
+    } catch {
+      return { host: "", port: "47821", token: "", fp: "" };
+    }
+  };
+
+  const copyField = async (val: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(val);
+      showToast(`${label} copied`);
+    } catch {
+      showToast(`Could not copy ${label}`);
     }
   };
 
@@ -479,32 +513,49 @@ export default function App() {
                 </div>
                 <div className="metric">
                   <span className="metric-label">Connected Phones</span>
-                  <span className="metric-val">{status?.connected_devices_count ?? 0}</span>
+                  <span className="metric-val" style={{ color: (status?.connected_devices_count ?? 0) > 0 ? "#10b981" : "#f59e0b" }}>
+                    {status?.connected_devices_count ?? 0} {(status?.connected_devices_count ?? 0) > 0 ? "(Live)" : "(Waiting)"}
+                  </span>
                 </div>
                 <div className="metric">
                   <span className="metric-label">Receiving Status</span>
                   <span className="metric-val">{status?.is_paused ? "Paused" : "Active"}</span>
                 </div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
                   <button className="primary-btn pair-btn" style={{ flex: 1 }} onClick={openQrModal}>
                     + Pair New Phone
                   </button>
                   <button className="btn-sm" onClick={handleTogglePause}>
                     {status?.is_paused ? "Resume" : "Pause"}
                   </button>
+                  {settings?.save_folder && (
+                    <button
+                      className="btn-sm"
+                      title="Open Downloads Folder"
+                      onClick={() => tauriInvoke("open_folder", { path: settings.save_folder })}
+                    >
+                      📁 Folder
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Push to Phone Card */}
               <div className="card">
                 <h3>Push to Phone</h3>
-                <p className="subtext">Send quick snippets, links, or files to your phone.</p>
+                <p className="subtext">Send quick snippets, links, or files to your phone (Ctrl+Enter to send).</p>
                 <textarea
                   className="input-textarea"
                   rows={2}
                   placeholder="Paste or type text to send..."
                   value={quickSendText}
                   onChange={(e) => setQuickSendText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                      e.preventDefault();
+                      handleSendText();
+                    }
+                  }}
                 />
                 <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                   <button className="primary-btn" style={{ flex: 1, marginTop: 0 }} onClick={handleSendText}>
@@ -997,19 +1048,58 @@ export default function App() {
       </main>
 
       {/* QR PAIRING MODAL */}
-      {qrModalOpen && qrData && (
-        <div className="modal-backdrop" onClick={() => setQrModalOpen(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Pair New Phone</h3>
-            <p className="subtext">Scan this QR code with the ClipSync app on your phone</p>
-            <div className="qr-box" dangerouslySetInnerHTML={{ __html: qrData.svg }} />
-            <div className="countdown">Expires in {countdown}s</div>
-            <button className="primary-btn mt-2" onClick={() => setQrModalOpen(false)}>
-              Done
-            </button>
+      {qrModalOpen && qrData && (() => {
+        const details = parseQrDetails(qrData.url);
+        return (
+          <div className="modal-backdrop" onClick={() => setQrModalOpen(false)}>
+            <div className="modal-card" style={{ maxWidth: "430px" }} onClick={(e) => e.stopPropagation()}>
+              <h3>Pair New Phone</h3>
+              <p className="subtext">Scan this QR code with the ClipSync app on your phone</p>
+              <div className="qr-box" dangerouslySetInnerHTML={{ __html: qrData.svg }} />
+              <div className="countdown">Expires in {countdown}s</div>
+
+              <button
+                className="btn-sm mt-2"
+                style={{ width: "100%" }}
+                onClick={() => setShowManualDetails((v) => !v)}
+              >
+                {showManualDetails ? "Hide Manual Pairing Details ▲" : "Can't scan? Show Manual Pairing Details ▼"}
+              </button>
+
+              {showManualDetails && (
+                <div className="manual-pairing-box">
+                  <div className="manual-field">
+                    <span className="manual-label">Host IP</span>
+                    <code className="manual-val">{details.host}</code>
+                    <button className="btn-sm" onClick={() => copyField(details.host, "Host IP")}>Copy</button>
+                  </div>
+                  <div className="manual-field">
+                    <span className="manual-label">Port</span>
+                    <code className="manual-val">{details.port}</code>
+                    <button className="btn-sm" onClick={() => copyField(details.port, "Port")}>Copy</button>
+                  </div>
+                  <div className="manual-field">
+                    <span className="manual-label">Token</span>
+                    <code className="manual-val">{details.token}</code>
+                    <button className="btn-sm" onClick={() => copyField(details.token, "Token")}>Copy</button>
+                  </div>
+                  <div className="manual-field">
+                    <span className="manual-label">SHA-256</span>
+                    <code className="manual-val" title={details.fp}>
+                      {details.fp ? `${details.fp.slice(0, 14)}...${details.fp.slice(-10)}` : ""}
+                    </code>
+                    <button className="btn-sm" onClick={() => copyField(details.fp, "Fingerprint")}>Copy</button>
+                  </div>
+                </div>
+              )}
+
+              <button className="primary-btn mt-2" onClick={() => setQrModalOpen(false)}>
+                Done
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* PHOTO LIGHTBOX MODAL */}
       {previewImage && (
